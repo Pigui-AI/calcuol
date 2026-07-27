@@ -14,6 +14,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/app ./app
 
-# RUN_SEEDS=true carga el proyecto demo al arrancar (idempotente).
+# RUN_SEEDS=true carga el proyecto demo al arrancar (idempotente). Default true
+# porque esta imagen sirve la demo con SQLite efímero; una variable RUN_SEEDS
+# definida en el servicio de Cloud Run tiene prioridad sobre este default.
 # Para persistencia real usar Cloud SQL vía DATABASE_URL (ver DEPLOY.md).
+ENV RUN_SEEDS=true
 CMD ["sh", "-c", "if [ \"$RUN_SEEDS\" = \"true\" ]; then python -m app.seeds; fi && uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
