@@ -43,7 +43,7 @@ jobs:
         env:
           # Definir en Settings → Secrets and variables → Actions → Variables
           # con la URL del backend en Cloud Run (https://...run.app)
-          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL || 'https://calcuol-git-221854109597.europe-west1.run.app' }}
         run: npm run build
 
       - uses: actions/upload-pages-artifact@v3
