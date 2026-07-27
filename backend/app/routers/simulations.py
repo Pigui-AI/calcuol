@@ -25,6 +25,7 @@ def serialize_run(run: SimulationRun, with_summary: bool = True) -> dict:
     if with_summary and run.logs:
         data["summary"] = run.logs.get("summary")
         data["bottlenecks"] = run.logs.get("bottlenecks")
+        data["cohorts"] = run.logs.get("cohorts") or []
     return data
 
 

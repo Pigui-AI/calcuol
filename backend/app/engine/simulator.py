@@ -14,6 +14,7 @@ from decimal import Decimal
 from app.engine.money import D, q_money, q_count, q_rate, ZERO, ONE
 from app.engine.curves import curve_target
 from app.engine.assumptions import as_bool
+from app.engine.cohorts import monthly_retention, activity_factor, ltv_b2c as cohort_ltv_b2c
 from app.engine.snapshot import effective_from_snapshot, hash_of, ENGINE_VERSION
 
 MONEY_METRICS_PREFIXES = ("tx.", "rev.", "cash.", "ar.", "cost.", "pnl.", "ue.arpa",
@@ -64,6 +65,16 @@ def simulate(snapshot: dict) -> dict:
     ticket = g("b2c.avg_ticket")
     margin_pct = g("b2c.margin_pct")
 
+    # cohortes B2C (fase 4, pantallas 24–30); cuando están activas sustituyen
+    # el churn plano por retención dependiente de la antigüedad
+    cohorts_enabled = as_bool(a["b2c.cohort.enabled"])
+    ret_m1 = g("b2c.cohort.retention_m1")
+    ret_stable = g("b2c.cohort.retention_stable")
+    ret_ramp = g("b2c.cohort.retention_ramp")
+    maturation_months = int(g("b2c.cohort.maturation_months"))
+    initial_activity = g("b2c.cohort.initial_activity_factor")
+    ltv_horizon = int(g("b2c.cohort.ltv_horizon_months"))
+
     commission_enabled = as_bool(a["revenue.commission.enabled"])
     pigui_pct = g("revenue.commission.pigui_pct")
     points_pct = g("revenue.commission.points_pct")
@@ -99,6 +110,11 @@ def simulate(snapshot: dict) -> dict:
     clients = b2b_initial
     churned_pool = ZERO
     consumers = consumers_initial_total if consumers_initial_total > ZERO else b2b_initial * consumers_per_client
+    # estado de cohortes: el stock inicial se trata como cohorte madura
+    cohort_state: list[dict] = []
+    if cohorts_enabled and consumers > ZERO:
+        cohort_state.append({"month": 0, "size": consumers, "initial": consumers,
+                             "mature": True, "series": []})
     cash = opening_cash
     min_cash = cash
     points_balance = ZERO
@@ -150,17 +166,46 @@ def simulate(snapshot: dict) -> dict:
         # 3) adopción B2C
         new_from_new_clients = adds * consumers_per_client
         organic_new = clients_avg * new_consumers_per_client
-        consumer_churned = consumers_start * churn_b2c
-        consumers_end = consumers_start + new_from_new_clients + organic_new - consumer_churned
-        if consumers_end < ZERO:
-            consumers_end = ZERO
+        new_consumers = new_from_new_clients + organic_new
+        if cohorts_enabled:
+            # cohortes (fase 4): retención por antigüedad en lugar de churn plano
+            consumer_churned = ZERO
+            month_cohorts = []   # (cohorte, tamaño promedio del mes, edad en el mes)
+            for c in cohort_state:
+                age = m - c["month"]   # meses completos desde el alta
+                ret = ret_stable if c["mature"] else monthly_retention(age, ret_m1, ret_stable, ret_ramp)
+                before = c["size"]
+                after = before * ret
+                consumer_churned += before - after
+                c["size"] = after
+                month_cohorts.append((c, (before + after) / 2, age + 1))
+            if new_consumers > ZERO:
+                born = {"month": m, "size": new_consumers, "initial": new_consumers,
+                        "mature": False, "series": [None] * (m - 1)}
+                cohort_state.append(born)
+                month_cohorts.append((born, new_consumers / 2, 1))
+            consumers_end = sum((c["size"] for c in cohort_state), ZERO)
+            for c in cohort_state:
+                c["series"].append(c["size"])
+        else:
+            consumer_churned = consumers_start * churn_b2c
+            consumers_end = consumers_start + new_consumers - consumer_churned
+            if consumers_end < ZERO:
+                consumers_end = ZERO
         consumers_avg = (consumers_start + consumers_end) / 2
         consumers = consumers_end
 
         # 4) campañas — fase 5 del roadmap (no modeladas en MVP)
 
         # 5) transacciones y GMV
-        buyers = consumers_avg * conversion
+        if cohorts_enabled:
+            # la actividad de compra madura con la edad de la cohorte
+            buyers = ZERO
+            for c, avg_size, age_in_month in month_cohorts:
+                factor = ONE if c["mature"] else activity_factor(age_in_month, initial_activity, maturation_months)
+                buyers += avg_size * conversion * factor
+        else:
+            buyers = consumers_avg * conversion
         transactions = buyers * frequency
         gmv = transactions * ticket
         eligible_utility = gmv * margin_pct
@@ -375,6 +420,22 @@ def simulate(snapshot: dict) -> dict:
         "annual": annual,
         "derived_inputs": eff["derived"],
     }
+    if cohorts_enabled:
+        # LTV por cohortes (5.6): comisión esperada de Pigui por consumidor nuevo
+        summary["ltv_b2c"] = str(q_money(cohort_ltv_b2c(
+            conversion, frequency, ticket, margin_pct,
+            pigui_pct if commission_enabled else ZERO,
+            ret_m1, ret_stable, ret_ramp, initial_activity, maturation_months, ltv_horizon,
+        )))
+
+    # matriz de cohortes para la pantalla de cohortes (solo informativa; no
+    # participa del output_hash, igual que los bottlenecks)
+    cohorts_log = [{
+        "cohort_month": c["month"],
+        "cohort_label": "inicial" if c["month"] == 0 else labels[c["month"] - 1],
+        "initial_size": str(q_count(c["initial"])),
+        "sizes": [None if v is None else str(q_count(v)) for v in c["series"]],
+    } for c in cohort_state]
 
     serializable = {
         key: [None if v is None else str(v) for v in series]
@@ -386,6 +447,6 @@ def simulate(snapshot: dict) -> dict:
         "months": labels,
         "metrics": metrics,
         "summary": summary,
-        "logs": {"bottlenecks": bottlenecks},
+        "logs": {"bottlenecks": bottlenecks, "cohorts": cohorts_log},
         "output_hash": output_hash,
     }

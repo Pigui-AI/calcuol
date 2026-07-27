@@ -31,6 +31,15 @@ DEFAULTS = {
     "b2c.avg_ticket":                     ("180", "MXN", "Ticket promedio"),
     "b2c.margin_pct":                     ("0.35", "%", "Margen elegible sobre venta neta"),
 
+    # --- Cohortes B2C (fase 4, pantallas 24–30) ---
+    "b2c.cohort.enabled":                 ("false", "bool", "Modelo de cohortes B2C activo (fase 4)"),
+    "b2c.cohort.retention_m1":            ("0.70", "%", "Retención del primer mes tras el alta"),
+    "b2c.cohort.retention_stable":        ("0.94", "%", "Retención mensual madura (largo plazo)"),
+    "b2c.cohort.retention_ramp":          ("0.85", "%", "Convergencia hacia la retención madura (decimal 0–1)"),
+    "b2c.cohort.maturation_months":       ("3", "meses", "Meses para alcanzar actividad de compra plena"),
+    "b2c.cohort.initial_activity_factor": ("0.60", "%", "Actividad de compra del primer mes (sobre conversión)"),
+    "b2c.cohort.ltv_horizon_months":      ("36", "meses", "Horizonte del LTV por cohorte"),
+
     # --- Modelo de ingresos: comisiones (3.1) ---
     "revenue.commission.enabled":     ("true", "bool", "Motor de comisiones activo"),
     "revenue.commission.pigui_pct":   ("0.25", "%", "Participación Pigui sobre utilidad elegible"),

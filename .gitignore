@@ -2,12 +2,15 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+backend/.venv/
 backend/pigui.db
+*.db-journal
 backend/exports_files/
 
 # Node / Next.js
 frontend/node_modules/
 frontend/.next/
+frontend/out/
 frontend/next-env.d.ts
 
 # Entorno

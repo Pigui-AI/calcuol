@@ -10,7 +10,7 @@ from decimal import Decimal
 from app.engine.money import D
 from app.engine import assumptions as A
 
-ENGINE_VERSION = "1.0.0"
+ENGINE_VERSION = "1.1.0"
 
 
 def canonical_json(data) -> str:

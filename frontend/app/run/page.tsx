@@ -269,9 +269,17 @@ function RunResultsPage() {
       )}
       {tab === "Unit economics" && (
         <div className="space-y-4">
+          {run.summary?.ltv_b2c && (
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              <KpiCard label="LTV B2C por cohorte" value={money(run.summary.ltv_b2c, currency)}
+                hint="Comisión esperada de Pigui por consumidor nuevo (retención por cohortes)" />
+            </div>
+          )}
           <MetricTable months={months} metrics={metrics} rows={UE_ROWS} currency={currency} />
           <p className="text-xs text-slate-400">
-            LTV = CM mensual por cliente ÷ churn (aproximación; por cohortes en fase 4). “—” significa
+            LTV (B2B) = CM mensual por cliente ÷ churn. {run.summary?.ltv_b2c
+              ? "El LTV B2C por cohorte usa la retención por antigüedad (fase 4)."
+              : "Con cohortes activas (fase 4) se calcula además el LTV B2C por cohorte."} “—” significa
             no alcanzable/no calculable ese mes (p. ej. margen ≤ 0), según la especificación 5.6.
           </p>
         </div>

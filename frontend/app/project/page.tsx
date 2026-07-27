@@ -85,6 +85,9 @@ function ProjectHub() {
                   <Button variant="secondary" href={`/assumptions/?project=${project.id}&scenario=${s.id}`} className="!px-3 !py-1.5">
                     Supuestos
                   </Button>
+                  <Button variant="secondary" href={`/growth-b2b/?project=${project.id}&scenario=${s.id}`} className="!px-3 !py-1.5">
+                    Crecimiento
+                  </Button>
                   <Button variant="secondary" href={`/simulate/?project=${project.id}&scenario=${s.id}`} className="!px-3 !py-1.5">
                     Simular
                   </Button>

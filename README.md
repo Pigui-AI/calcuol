@@ -1,6 +1,6 @@
 # Pigui Financial Engine
 
-Implementación del MVP (Fases 0–3 del roadmap) de la **Especificación funcional, financiera, UX y técnica v1.0** del motor de simulaciones hiperrealistas de Pigui.
+Implementación de las Fases 0–4 del roadmap de la **Especificación funcional, financiera, UX y técnica v1.0** del motor de simulaciones hiperrealistas de Pigui.
 
 ## Qué incluye este MVP
 
@@ -12,9 +12,10 @@ El motor cubre el flujo completo de valor definido en la sección 15 del documen
 pigui-financial-engine/
 ├── backend/                  # FastAPI + motor financiero en Python
 │   ├── app/
-│   │   ├── engine/           #   Motor puro: money types, curvas, snapshots, simulador
+│   │   ├── engine/           #   Motor puro: money types, curvas, cohortes, snapshots, simulador
 │   │   │   ├── money.py      #   Aritmética Decimal, nunca float (6.2/16.1)
 │   │   │   ├── curves.py     #   Curvas lineal/exponencial/logística/desacelerada (p.27)
+│   │   │   ├── cohorts.py    #   Cohortes B2C: retención por antigüedad y LTV (fase 4, 24–30)
 │   │   │   ├── assumptions.py#   Catálogo de supuestos con defaults y validaciones
 │   │   │   ├── snapshot.py   #   Snapshots inmutables + hash canónico (4.3)
 │   │   │   └── simulator.py  #   Orden de cálculo mensual (4.2) y fórmulas (5)
@@ -62,8 +63,9 @@ Abre http://localhost:3000. La documentación interactiva de la API queda en htt
 
 ```bash
 cd backend
-python -m pytest tests/ -q     # 21 pruebas: determinismo, churn exacto, AR, MRR mes 13,
-                               # cuellos de botella, reconciliación de caja/P&L/puntos
+python -m pytest tests/ -q     # 34 pruebas: determinismo, churn exacto, AR, MRR mes 13,
+                               # cuellos de botella, reconciliación de caja/P&L/puntos,
+                               # cohortes B2C (equivalencia, matriz, LTV, sensibilidad de hash)
 ```
 
 ## Mapa de pantallas implementadas
@@ -75,6 +77,9 @@ python -m pytest tests/ -q     # 21 pruebas: determinismo, churn exacto, AR, MRR
 | 07 Portafolio de clientes B2B | `/projects/{id}/clients` |
 | 08–12 Wizard de cliente (negocio, marca/sucursales, catálogo, línea base, revisión) | `/projects/{id}/clients/new` |
 | 13–16 Perfil del cliente (resumen, sucursales, catálogo, línea base) | `/projects/{id}/clients/{clientId}` |
+| 24–27 Adquisición B2B (curvas y restricciones) | `/growth-b2b` |
+| 28–29 Adopción B2C (embudo) | `/growth-b2c` |
+| 30 Cohortes y restricciones de crecimiento | `/cohorts` + sección en `/run` |
 | 50 Centro de supuestos | `/projects/{id}/scenarios/{sid}/assumptions` |
 | 51 Escenarios | `/projects/{id}` (tarjetas de escenario) |
 | 52 Ejecutar simulación | `/projects/{id}/scenarios/{sid}/simulate` |
@@ -85,9 +90,11 @@ python -m pytest tests/ -q     # 21 pruebas: determinismo, churn exacto, AR, MRR
 
 Aritmética `Decimal` en todo el motor con redondeo solo al emitir métricas (16.1). Supuestos versionados que nunca se sobrescriben: cada cambio crea una nueva versión con actor y timestamp, y la jerarquía de resolución es default → proyecto → escenario (pantalla 50). Los escenarios Conservador y Optimista se materializan como overrides explícitos y editables. La distribución 25/5/70 es paramétrica y el servidor valida que sume 100%. Los puntos emitidos no son ingreso: son pasivo con ledger de emisión/redención/expiración. La ruta de pago en caja devenga la comisión y genera cuentas por cobrar con rezago y tasa de cobro; la ruta Stripe cobra de inmediato. El motor explica el cuello de botella de crecimiento de cada mes (curva, presupuesto o capacidad de onboarding). Si el portafolio tiene líneas base, el motor deriva el perfil por cliente del portafolio y lo etiqueta como dato "estimado" en el snapshot y el Excel. Toda mutación relevante escribe `AuditEvent`; la línea base registra `FieldProvenance` por campo. La simulación corre como job con `Idempotency-Key`, y el frontend nunca calcula resultados definitivos: solo el servidor.
 
-## Qué sigue (fases 4–8 del roadmap)
+**Cohortes B2C (fase 4).** El modelo de cohortes es activable por supuesto (`b2c.cohort.enabled`), igual que suscripciones y tokens: desactivado, el motor es idéntico al modelo agregado (hay un golden test de equivalencia exacta). Activado, cada mes de altas forma una cohorte con retención dependiente de la antigüedad — converge de `retention_m1` a `retention_stable` a velocidad `retention_ramp` — y la actividad de compra madura linealmente hasta `maturation_months`. El stock inicial se trata como cohorte madura. El motor emite la matriz de cohortes (informativa, fuera del `output_hash`, como los bottlenecks) y el LTV B2C por cohorte (5.6) en el summary. La vista previa de crecimiento (`/growth-preview`) ejecuta el motor en memoria sin persistir nada: el frontend sigue sin calcular resultados.
 
-Fase 4: growth avanzado y cohortes (pantallas 24–30, parcialmente cubiertas por el motor actual). Fase 5: campañas, rewards, embudo de redención, transacciones individuales, settlements y AR por factura (31–44); el modelo de datos de la sección 7 ya contempla las entidades. Fase 6: planes de suscripción detallados, ledger de tokens y hiring plan (45–49); los motores agregados ya son activables. Fase 7: sensibilidad, comparador de escenarios y documento ejecutivo (54–55, 71). Fase 8: importación con IA (IA-01 a IA-07) y conectores; el flujo de la sección 8 exige revisión humana antes de persistir, y `ImportJob`/`FieldProvenance` ya existen en el esquema.
+## Qué sigue (fases 5–8 del roadmap)
+
+Fase 5: campañas, rewards, embudo de redención, transacciones individuales, settlements y AR por factura (31–44). Fase 6: planes de suscripción detallados, ledger de tokens y hiring plan (45–49); los motores agregados ya son activables. Fase 7: sensibilidad, comparador de escenarios y documento ejecutivo (54–55, 71). Fase 8: importación con IA (IA-01 a IA-07) y conectores; el flujo de la sección 8 exige revisión humana antes de persistir, y `ImportJob`/`FieldProvenance` ya existen en el esquema.
 
 ## Verificación realizada
 

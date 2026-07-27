@@ -21,12 +21,12 @@ SCENARIO_MULTIPLIERS = {
     "conservador": {
         "b2b.churn_rate": "1.25", "b2b.curve.rate": "0.8", "b2b.cac": "1.15",
         "b2c.purchase_conversion": "0.85", "b2c.avg_ticket": "0.95",
-        "b2c.consumer_churn_rate": "1.2",
+        "b2c.consumer_churn_rate": "1.2", "b2c.cohort.retention_m1": "0.85",
     },
     "optimista": {
         "b2b.churn_rate": "0.8", "b2b.curve.rate": "1.2", "b2b.cac": "0.9",
         "b2c.purchase_conversion": "1.1", "b2c.avg_ticket": "1.05",
-        "b2c.consumer_churn_rate": "0.85",
+        "b2c.consumer_churn_rate": "0.85", "b2c.cohort.retention_m1": "1.1",
     },
 }
 
@@ -179,7 +179,9 @@ def execute_run(run_id: str):
         db.add_all(rows)
         run.status = "succeeded"
         run.output_hash = result["output_hash"]
-        run.logs = {"bottlenecks": result["logs"]["bottlenecks"], "summary": result["summary"]}
+        run.logs = {"bottlenecks": result["logs"]["bottlenecks"],
+                    "cohorts": result["logs"].get("cohorts", []),
+                    "summary": result["summary"]}
         run.finished_at = datetime.now(timezone.utc)
         db.commit()
     except Exception as exc:  # noqa: BLE001

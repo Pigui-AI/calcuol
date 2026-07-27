@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.database import init_db
-from app.routers import projects, clients, simulations, exports
+from app.routers import projects, clients, simulations, exports, growth
 from app.engine.snapshot import ENGINE_VERSION
 
 DEFAULT_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000,https://pigui-ai.github.io"
@@ -35,6 +35,7 @@ app.include_router(projects.router, tags=["proyectos y escenarios"])
 app.include_router(clients.router, tags=["clientes B2B"])
 app.include_router(simulations.router, tags=["simulación"])
 app.include_router(exports.router, tags=["exportación"])
+app.include_router(growth.router, tags=["growth y cohortes (fase 4)"])
 
 
 @app.exception_handler(Exception)

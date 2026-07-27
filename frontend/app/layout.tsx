@@ -21,9 +21,9 @@ const MENU: { group: string; items: { label: string; href?: string; phase?: stri
   {
     group: "Crecimiento",
     items: [
-      { label: "Adquisición B2B", phase: "Fase 4" },
-      { label: "Adopción B2C", phase: "Fase 4" },
-      { label: "Cohortes", phase: "Fase 4" },
+      { label: "Adquisición B2B", href: "/growth-b2b/" },
+      { label: "Adopción B2C", href: "/growth-b2c/" },
+      { label: "Cohortes", href: "/cohorts/" },
     ],
   },
   {
@@ -87,7 +87,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 ))}
               </nav>
               <p className="mt-8 text-[11px] leading-relaxed text-slate-400">
-                MVP Fases 0–3 · motor v1.0.0<br />Especificación v1.0 (jul 2026)
+                Fases 0–4 · motor v1.1.0<br />Especificación v1.0 (jul 2026)
               </p>
             </div>
           </aside>

@@ -82,14 +82,39 @@ export interface RunSummary {
   annual: { year: number; revenue: string; gmv: string; ebitda: string; opex: string;
             clients_end: string; consumers_end: string; cash_end: string }[];
   derived_inputs: Record<string, { from: string; to: string; source: string }>;
+  ltv_b2c?: string;
+}
+export interface BottleneckRow {
+  month: number; objetivo_curva: string; altas_deseadas: string;
+  altas_activadas: string; restriccion_activa: string;
+}
+export interface CohortRow {
+  cohort_month: number; cohort_label: string; initial_size: string; sizes: (string | null)[];
+}
+export interface RetentionPoint {
+  age: number; retention: string; survival: string; activity_factor: string;
+}
+export interface GrowthPreview {
+  months: string[];
+  metrics: Record<string, (string | null)[]>;
+  totals: Record<string, string>;
+  bottlenecks: BottleneckRow[];
+  cohorts: CohortRow[];
+  cohorts_enabled: boolean;
+  retention_curve: RetentionPoint[];
+  ltv_b2c: string | null;
+  derived_inputs: Record<string, { from: string; to: string; source: string }>;
+  assumptions: Record<string, { value: string; origin: string; unit: string; description: string }>;
+  input_hash: string;
+  engine_version: string;
 }
 export interface Run {
   id: string; scenario_id: string; status: string; engine_version: string;
   horizon_months: number; input_hash: string; output_hash: string | null; error: string | null;
   created_at: string; finished_at: string | null;
   summary?: RunSummary;
-  bottlenecks?: { month: number; objetivo_curva: string; altas_deseadas: string;
-                  altas_activadas: string; restriccion_activa: string }[];
+  bottlenecks?: BottleneckRow[];
+  cohorts?: CohortRow[];
 }
 export interface RunResults {
   run: Run; months: string[]; metrics: Record<string, (string | null)[]>;
