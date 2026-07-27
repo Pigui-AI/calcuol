@@ -48,13 +48,37 @@ DEFAULTS = {
 
     # --- Rutas de pago (3.2) ---
     "payments.stripe_share":          ("0.60", "%", "Parte del GMV cobrada vía Pigui Scan/Stripe"),
-    "payments.processing_fee_pct":    ("0.029", "%", "Fee de procesamiento (informativo MVP)"),
+    "payments.processing_fee_pct":    ("0.029", "%", "Fee de procesamiento sobre lo cobrado vía Stripe"),
     "payments.ar.collection_lag_months": ("1", "meses", "Rezago de cobro para ruta en caja"),
     "payments.ar.collection_rate":    ("0.98", "%", "Tasa de cobro de AR (resto incobrable)"),
+
+    # --- Settlements y fees (3.2 refinado, fase 5, pantallas 40–44) ---
+    "payments.processing_fee.enabled": ("false", "bool", "Aplicar payments.processing_fee_pct a lo cobrado vía Stripe"),
+    "payments.settlement.enabled":    ("false", "bool", "Flujo bruto por Stripe con liquidación diferida a negocios"),
+    "payments.settlement.lag_months": ("1", "meses", "Rezago de liquidación a negocios (float)"),
 
     # --- Puntos (5.4) ---
     "points.monthly_redemption_rate": ("0.35", "%", "Redención mensual sobre saldo de puntos"),
     "points.monthly_expiry_rate":     ("0.05", "%", "Expiración mensual sobre saldo (breakage)"),
+
+    # --- Embudo de redención (5.4 refinado, fase 5, pantallas 35–36) ---
+    "points.funnel.enabled":          ("false", "bool", "Embudo de redención por edad FIFO (sustituye tasas planas)"),
+    "points.funnel.intent_rate":      ("0.50", "%", "Intención mensual de redención sobre saldo inicial"),
+    "points.funnel.redemption_conversion": ("0.70", "%", "Conversión de intentos a redenciones efectivas"),
+    "points.funnel.expiry_months":    ("12", "meses", "Edad de expiración de puntos no redimidos (FIFO)"),
+
+    # --- Campañas (fase 5, pantallas 31–33, 37) ---
+    "campaigns.enabled":              ("false", "bool", "Motor de campañas activo (fase 5)"),
+    "campaign.uplift.conversion_pct": ("0", "%", "Uplift relativo de conversión de compra durante la campaña"),
+    "campaign.uplift.frequency_pct":  ("0", "%", "Uplift relativo de frecuencia de compra durante la campaña"),
+    "campaign.uplift.ticket_pct":     ("0", "%", "Uplift relativo de ticket promedio durante la campaña"),
+    "campaign.points.extra_pct":      ("0", "%", "Puntos extra sobre utilidad elegible, fondeados por Pigui"),
+    "campaign.redemption.uplift_pct": ("0", "%", "Uplift aditivo de la tasa de redención/intención"),
+    "campaign.cost_monthly":          ("0", "MXN", "Costo directo mensual de la campaña"),
+
+    # --- Recompensas (fase 5, pantalla 34) ---
+    "rewards.catalog_gating.enabled": ("false", "bool", "Limitar emisión de puntos al catálogo reward_eligible"),
+    "rewards.eligible_share":         ("1", "%", "Share de utilidad elegible que emite puntos (derivable del catálogo)"),
 
     # --- Suscripciones (3.4) ---
     "subs.enabled":                   ("false", "bool", "Motor de suscripciones activo"),

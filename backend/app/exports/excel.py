@@ -9,7 +9,7 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import SimulationRun, MonthlyProjection, Client, Project
+from app.models import SimulationRun, MonthlyProjection, Client, Project, ArInvoice
 from app.engine.money import D
 
 HEADER_FILL = PatternFill("solid", fgColor="1F2A44")
@@ -29,6 +29,8 @@ PNL_ROWS = [
     ("Margen bruto", "pnl.gross_margin"),
     ("Contribution Margin", "pnl.contribution_margin"),
     ("OPEX (fijos + adquisición)", "pnl.opex"),
+    ("Costos de campañas", "cost.campaigns"),
+    ("Fees de procesamiento", "cost.processing_fees"),
     ("EBITDA", "pnl.ebitda"),
 ]
 
@@ -38,6 +40,8 @@ CASH_ROWS = [
     ("Entradas totales", "cash.in_total"),
     ("Salidas totales", "cash.out_total"),
     ("Pago de redenciones de puntos", "cash.points_paid_out"),
+    ("Liquidaciones a negocios", "stl.paid_out"),
+    ("Payable a negocios (saldo)", "stl.payable_end"),
     ("Flujo neto", "cash.net"),
     ("Caja al cierre", "cash.balance_end"),
     ("AR nueva", "ar.new"),
@@ -61,6 +65,40 @@ PLAN_ROWS = [
     ("Ingresos Pigui", "pnl.revenue", MONEY_FMT),
     ("EBITDA", "pnl.ebitda", MONEY_FMT),
     ("Caja", "cash.balance_end", MONEY_FMT),
+]
+
+CAMPAIGN_ROWS = [
+    ("Campañas activas", "camp.active_count", COUNT_FMT),
+    ("Puntos extra de campañas", "camp.extra_points", COUNT_FMT),
+    ("GMV incremental", "camp.gmv_incremental", MONEY_FMT),
+    ("Ingreso incremental", "camp.revenue_incremental", MONEY_FMT),
+    ("Costos de campañas", "cost.campaigns", MONEY_FMT),
+    ("ROI de campañas", "camp.roi", "0.00"),
+    ("Puntos emitidos (valor)", "points.emitted", MONEY_FMT),
+    ("Intentos de redención", "points.funnel.intents", COUNT_FMT),
+    ("Puntos redimidos", "points.redeemed", MONEY_FMT),
+    ("Puntos expirados", "points.expired", MONEY_FMT),
+    ("Saldo de puntos (pasivo)", "points.balance_end", MONEY_FMT),
+]
+
+SETTLEMENT_ROWS = [
+    ("Transacciones vía Stripe", "tx.count_stripe", COUNT_FMT),
+    ("Transacciones en caja", "tx.count_cash", COUNT_FMT),
+    ("GMV vía Stripe", "tx.gmv_stripe", MONEY_FMT),
+    ("GMV en caja", "tx.gmv_cash", MONEY_FMT),
+    ("Cobro bruto vía Stripe (settlements)", "stl.gross_collected", MONEY_FMT),
+    ("Fees de procesamiento", "cost.processing_fees", MONEY_FMT),
+    ("Neto a liquidar a negocios", "stl.merchant_due", MONEY_FMT),
+    ("Liquidaciones a negocios", "stl.paid_out", MONEY_FMT),
+    ("Payable a negocios (saldo)", "stl.payable_end", MONEY_FMT),
+]
+
+CAMPAIGN_SUMMARY_ROWS = [
+    ("Gasto total en campañas", "total_spend", MONEY_FMT),
+    ("Puntos extra totales", "total_extra_points", COUNT_FMT),
+    ("GMV incremental total", "total_gmv_incremental", MONEY_FMT),
+    ("Ingreso incremental total", "total_revenue_incremental", MONEY_FMT),
+    ("ROI total", "roi_total", "0.00"),
 ]
 
 UE_ROWS = [
@@ -109,6 +147,32 @@ def _write_metric_sheet(ws, title, months, metrics, rows_def, currency):
         for col in range(2, len(months) + 2):
             ws.cell(row=ws.max_row, column=col).number_format = fmt
     ws.freeze_panes = "B5"
+    ws.column_dimensions["A"].width = 34
+    for i in range(len(months)):
+        ws.column_dimensions[get_column_letter(i + 2)].width = 12
+
+
+def _sheet_run_header(ws, run: SimulationRun, title: str):
+    """Cabecera con referencia al run y sus hashes (mismo patrón del README)."""
+    ws.append([title])
+    ws["A1"].font = TITLE_FONT
+    ws.append(["Run de simulación", run.id])
+    ws.append(["Hash de inputs", run.input_hash])
+    ws.append(["Hash de outputs", run.output_hash or ""])
+    ws.append(["Versión del motor", run.engine_version])
+    ws.append([])
+
+
+def _append_metric_matrix(ws, months, metrics, rows_def):
+    """Matriz mensual de métricas anexada en la posición actual de la hoja."""
+    header = ["Concepto"] + months
+    ws.append(header)
+    _style_header(ws, ws.max_row, len(header))
+    for label, key, fmt in rows_def:
+        series = metrics.get(key, {})
+        ws.append([label] + [series.get(i + 1) for i in range(len(months))])
+        for col in range(2, len(months) + 2):
+            ws.cell(row=ws.max_row, column=col).number_format = fmt
     ws.column_dimensions["A"].width = 34
     for i in range(len(months)):
         ws.column_dimensions[get_column_letter(i + 2)].width = 12
@@ -240,6 +304,61 @@ def generate_workbook(db: Session, run: SimulationRun) -> str:
             ws.cell(row=ws.max_row, column=col).number_format = MONEY_FMT
     for col in ("B", "C", "D", "E", "H"):
         ws.column_dimensions[col].width = 15
+
+    # --- Campaigns & Points (fase 5; métricas siempre emitidas, en cero si el motor está apagado) ---
+    ws = wb.create_sheet("Campaigns & Points")
+    _sheet_run_header(ws, run, "Campañas y puntos")
+    ws.append(["Campañas congeladas en el snapshot"])
+    ws[f"A{ws.max_row}"].font = Font(bold=True)
+    campaigns = snapshot.get("campaigns", []) or []
+    if campaigns:
+        ws.append(["Campaña", "Tipo", "Ventana", "Efecto", "Valor"])
+        _style_header(ws, ws.max_row, 5)
+        for camp in campaigns:
+            window = f"Meses {camp.get('start_month', '')}–{camp.get('end_month', '')}"
+            effects = camp.get("effects", {}) or {}
+            first = True
+            for key in sorted(effects):
+                ws.append([camp.get("name", "") if first else "",
+                           camp.get("campaign_type", "") if first else "",
+                           window if first else "", key, effects[key]])
+                first = False
+            if first:  # campaña sin efectos registrados
+                ws.append([camp.get("name", ""), camp.get("campaign_type", ""), window, "", ""])
+    else:
+        ws.append(["Sin campañas congeladas en este run"])
+    ws.append([])
+    _append_metric_matrix(ws, months, metrics, CAMPAIGN_ROWS)
+    ws.append([])
+    ws.append(["Resumen de campañas del horizonte"])
+    ws[f"A{ws.max_row}"].font = Font(bold=True)
+    camp_summary = summary.get("campaigns", {}) or {}
+    for label, key, fmt in CAMPAIGN_SUMMARY_ROWS:
+        value = camp_summary.get(key)
+        ws.append([label, float(D(value)) if value not in (None, "") else None])
+        ws.cell(row=ws.max_row, column=2).number_format = fmt
+
+    # --- Settlements & AR (fase 5) ---
+    ws = wb.create_sheet("Settlements & AR")
+    _sheet_run_header(ws, run, "Liquidaciones a negocios y cuentas por cobrar")
+    _append_metric_matrix(ws, months, metrics, SETTLEMENT_ROWS)
+    ws.append([])
+    ws.append(["Facturas de AR del run (ruta en caja)"])
+    ws[f"A{ws.max_row}"].font = Font(bold=True)
+    ws.append(["Número", "Mes de emisión", "Monto", "Mes de vencimiento",
+               "Cobro esperado", "Castigo esperado", "Estado"])
+    _style_header(ws, ws.max_row, 7)
+    invoices = db.execute(select(ArInvoice).where(ArInvoice.run_id == run.id)
+                          .order_by(ArInvoice.month_index)).scalars().all()
+    if invoices:
+        for inv in invoices:
+            ws.append([inv.invoice_number, inv.month_label, float(D(inv.amount)),
+                       inv.due_month_label, float(D(inv.expected_collection)),
+                       float(D(inv.expected_writeoff)), inv.status])
+            for col in (3, 5, 6):
+                ws.cell(row=ws.max_row, column=col).number_format = MONEY_FMT
+    else:
+        ws.append(["Sin facturas de AR para este run"])
 
     file_name = f"pigui_business_plan_{scenario_info['type']}_{run.id[:8]}.xlsx"
     path = os.path.join(EXPORT_DIR, file_name)

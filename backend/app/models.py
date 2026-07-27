@@ -253,6 +253,84 @@ class AuditEvent(Base):
     timestamp = Column(DateTime, default=utcnow)
 
 
+class Campaign(Base):
+    """Campaña de crecimiento/recompensas (pantallas 31–33). Sus efectos numéricos
+    viven como AssumptionSet con scope_type='campaign' (versionados, append-only)."""
+    __tablename__ = "campaigns"
+    id = Column(String(32), primary_key=True, default=new_id)
+    project_id = Column(String(32), ForeignKey("projects.id"), nullable=False)
+    name = Column(String(200), nullable=False)
+    description = Column(Text, default="")
+    campaign_type = Column(String(30), nullable=False, default="conversion")
+    # conversion|frecuencia|ticket|puntos_extra|redencion|mixta (etiqueta UI; el motor lee los efectos)
+    status = Column(String(20), nullable=False, default="draft")  # draft|active|archived
+    start_month = Column(Integer, nullable=False, default=1)   # índice 1..horizonte (como CostItem)
+    end_month = Column(Integer, nullable=False, default=1)
+    created_by = Column(String(120), default="usuario")
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class TransactionRecord(Base):
+    """Registro operativo de transacciones reales (pantallas 38–39). Append-only:
+    jamás UPDATE/DELETE; una corrección es una fila espejo con montos negados y
+    reverses_transaction_id. No alimenta al motor en Fase 5 (conciliación: Fase 7)."""
+    __tablename__ = "transaction_records"
+    id = Column(String(32), primary_key=True, default=new_id)
+    project_id = Column(String(32), ForeignKey("projects.id"), nullable=False)
+    client_id = Column(String(32), ForeignKey("clients.id"), nullable=False)
+    branch_id = Column(String(32), ForeignKey("branches.id"), nullable=True)
+    campaign_id = Column(String(32), ForeignKey("campaigns.id"), nullable=True)
+    occurred_on = Column(String(10), nullable=False)   # "YYYY-MM-DD"
+    month_label = Column(String(7), nullable=False)    # derivado de occurred_on en el servidor
+    amount = Column(MoneyType, nullable=False)         # ticket bruto MXN
+    payment_route = Column(String(10), nullable=False, default="stripe")  # stripe|caja
+    reward_eligible = Column(Boolean, nullable=False, default=True)
+    points_issued = Column(MoneyType, default="0")
+    points_redeemed = Column(MoneyType, default="0")
+    reference = Column(String(120), default="")        # folio externo
+    reverses_transaction_id = Column(String(32), nullable=True)  # contra-asiento
+    source_type = Column(String(20), default="declarado")        # clasificación 7.1
+    created_by = Column(String(120), default="usuario")
+    created_at = Column(DateTime, default=utcnow)
+    __table_args__ = (Index("ix_txrec_lookup", "project_id", "client_id", "month_label"),)
+
+
+class SettlementBatch(Base):
+    """Liquidación mensual a negocios derivada de un run (pantalla 41).
+    Append-only, escrita por execute_run; inmutable como MonthlyProjection."""
+    __tablename__ = "settlement_batches"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(String(32), ForeignKey("simulation_runs.id"), nullable=False)
+    month_index = Column(Integer, nullable=False)
+    month_label = Column(String(7), nullable=False)
+    gross_collected = Column(MoneyType, nullable=False)   # GMV bruto cobrado por Pigui vía Stripe
+    processing_fee = Column(MoneyType, nullable=False, default="0")
+    pigui_take = Column(MoneyType, nullable=False)        # comisión + puntos base del tramo Stripe
+    merchant_due = Column(MoneyType, nullable=False)      # neto a liquidar al negocio
+    payout_month_index = Column(Integer, nullable=False)  # month_index + lag
+    status = Column(String(20), nullable=False)           # pagado|pendiente (payout <= horizonte o no)
+    __table_args__ = (Index("ix_settlement_lookup", "run_id", "month_index"),)
+
+
+class ArInvoice(Base):
+    """AR por factura (pantallas 42–43): factura sintética mensual agregada de la
+    ruta en caja, derivada de un run. Append-only, escrita por execute_run."""
+    __tablename__ = "ar_invoices"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(String(32), ForeignKey("simulation_runs.id"), nullable=False)
+    invoice_number = Column(String(20), nullable=False)   # "INV-0001" (determinista: mes de emisión)
+    month_index = Column(Integer, nullable=False)         # mes de emisión
+    month_label = Column(String(7), nullable=False)
+    amount = Column(MoneyType, nullable=False)            # to_ar del mes
+    due_month_index = Column(Integer, nullable=False)     # emisión + lag AR existente
+    due_month_label = Column(String(7), nullable=False)
+    expected_collection = Column(MoneyType, nullable=False)  # amount * tasa de cobranza
+    expected_writeoff = Column(MoneyType, nullable=False)    # amount * (1 - tasa)
+    status = Column(String(20), nullable=False)           # cobrada|por_cobrar (due <= horizonte o no)
+    __table_args__ = (Index("ix_arinv_lookup", "run_id", "month_index"),)
+
+
 class ExportJob(Base):
     __tablename__ = "export_jobs"
     id = Column(String(32), primary_key=True, default=new_id)

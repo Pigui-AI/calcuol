@@ -112,6 +112,25 @@ class ClientPatch(BaseModel):
     notes: Optional[str] = None
 
 
+class CampaignCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str = ""
+    campaign_type: str = "conversion"  # conversion|frecuencia|ticket|puntos_extra|redencion|mixta
+    start_month: int
+    end_month: int
+    effects: dict[str, str] = {}  # claves campaign.* del catálogo
+    actor: str = "usuario"
+
+
+class CampaignPatch(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    campaign_type: Optional[str] = None
+    status: Optional[str] = None  # draft|active|archived (sin DELETE: archivar)
+    start_month: Optional[int] = None
+    end_month: Optional[int] = None
+
+
 class RunCreate(BaseModel):
     scenario_id: str
 
@@ -119,3 +138,17 @@ class RunCreate(BaseModel):
 class ExportCreate(BaseModel):
     run_id: str
     format: str = "xlsx"
+
+
+class TransactionIn(BaseModel):
+    client_id: str
+    branch_id: Optional[str] = None
+    campaign_id: Optional[str] = None
+    occurred_on: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    amount: str
+    payment_route: str = "stripe"
+    reward_eligible: bool = True
+    points_issued: str = "0"
+    points_redeemed: str = "0"
+    reference: str = ""
+    source_type: str = "declarado"

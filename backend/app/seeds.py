@@ -4,7 +4,7 @@ Uso:  python -m app.seeds
 """
 from app.database import SessionLocal, init_db
 from app.models import (Project, Scenario, Client, Brand, Branch, ProductService,
-                        ClientBaseline, CostItem)
+                        ClientBaseline, CostItem, Campaign)
 from app.engine.snapshot import ENGINE_VERSION
 from app import services, audit
 
@@ -96,6 +96,11 @@ PROJECT_ASSUMPTIONS = {
     "b2c.cohort.maturation_months": "3",
     "b2c.cohort.initial_activity_factor": "0.60",
     "payments.stripe_share": "0.55",
+    "campaigns.enabled": "true",
+    "points.funnel.enabled": "true",
+    "payments.processing_fee.enabled": "true",
+    "payments.settlement.enabled": "true",
+    "rewards.catalog_gating.enabled": "true",
     "subs.enabled": "true",
     "subs.start_month": "13",
     "subs.price_monthly": "599",
@@ -174,6 +179,21 @@ def run_seeds():
             ))
             audit.record(db, "client_created", "Client", client.id, actor_id="seeds",
                          after={"trade_name": trade})
+
+        # campaña demo (fase 5): promo de conversión con puntos extra en meses 3–8
+        promo = Campaign(project_id=project.id, name="Promo de lanzamiento",
+                         description="Impulso de conversión con puntos extra durante el arranque.",
+                         campaign_type="mixta", status="active",
+                         start_month=3, end_month=8, created_by="seeds")
+        db.add(promo)
+        db.flush()
+        services.upsert_campaign_effects(db, project.id, promo.id, {
+            "campaign.uplift.conversion_pct": "0.15",
+            "campaign.points.extra_pct": "0.05",
+            "campaign.cost_monthly": "12000",
+        }, source_type="declarado", actor="seeds")
+        audit.record(db, "campaign.create", "Campaign", promo.id, actor_id="seeds",
+                     after={"name": promo.name})
 
         audit.record(db, "project_created", "Project", project.id, actor_id="seeds",
                      after={"name": project.name})

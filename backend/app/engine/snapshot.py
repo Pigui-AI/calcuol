@@ -10,7 +10,7 @@ from decimal import Decimal
 from app.engine.money import D
 from app.engine import assumptions as A
 
-ENGINE_VERSION = "1.1.0"
+ENGINE_VERSION = "1.2.0"
 
 
 def canonical_json(data) -> str:
@@ -52,8 +52,14 @@ def _weighted_portfolio_profile(clients: list) -> dict | None:
 
 
 def build_snapshot(project: dict, scenario: dict, effective_assumptions: dict,
-                   cost_items: list, clients: list) -> dict:
-    """Construye el snapshot puro (serializable) que consume el simulador."""
+                   cost_items: list, clients: list, campaigns: list | None = None,
+                   reward_eligible_share: str | None = None) -> dict:
+    """Construye el snapshot puro (serializable) que consume el simulador.
+
+    `campaigns`: campañas activas con efectos ya resueltos, ordenadas por id (fase 5).
+    `reward_eligible_share`: share del catálogo elegible para puntos, derivado
+    del portafolio (fase 5, pantalla 34); None si no hay catálogo.
+    """
     portfolio_profile = _weighted_portfolio_profile(clients)
     snapshot = {
         "engine_version": ENGINE_VERSION,
@@ -73,9 +79,11 @@ def build_snapshot(project: dict, scenario: dict, effective_assumptions: dict,
                 "effective_to": ci["effective_to"],
             } for ci in sorted(cost_items, key=lambda x: (x["category"], x["name"]))
         ],
+        "campaigns": sorted(campaigns or [], key=lambda c: c["id"]),
         "portfolio": {
             "active_clients": len([c for c in clients if c.get("status") in ("active", "onboarding")]),
             "profile": portfolio_profile,
+            "reward_eligible_share": reward_eligible_share,
             "clients": [
                 {"id": c["id"], "trade_name": c["trade_name"], "industry": c["industry"], "status": c["status"]}
                 for c in sorted(clients, key=lambda x: x["id"])
@@ -114,4 +122,10 @@ def effective_from_snapshot(snapshot: dict) -> dict:
     if real_clients > assumed:
         derived["b2b.initial_clients"] = {"from": str(assumed), "to": str(real_clients), "source": "portafolio (real)"}
         a["b2b.initial_clients"] = str(real_clients)
+    # share elegible del catálogo (fase 5, pantalla 34): solo con gating activo
+    share = snapshot["portfolio"].get("reward_eligible_share")
+    if share not in (None, "") and A.as_bool(a.get("rewards.catalog_gating.enabled", "false")):
+        derived["rewards.eligible_share"] = {"from": a.get("rewards.eligible_share"), "to": share,
+                                             "source": "portafolio (real)"}
+        a["rewards.eligible_share"] = share
     return {"assumptions": a, "derived": derived}

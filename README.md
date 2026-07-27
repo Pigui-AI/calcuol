@@ -1,6 +1,6 @@
 # Pigui Financial Engine
 
-Implementación de las Fases 0–4 del roadmap de la **Especificación funcional, financiera, UX y técnica v1.0** del motor de simulaciones hiperrealistas de Pigui.
+Implementación de las Fases 0–5 del roadmap de la **Especificación funcional, financiera, UX y técnica v1.0** del motor de simulaciones hiperrealistas de Pigui.
 
 ## Qué incluye este MVP
 
@@ -63,9 +63,10 @@ Abre http://localhost:3000. La documentación interactiva de la API queda en htt
 
 ```bash
 cd backend
-python -m pytest tests/ -q     # 34 pruebas: determinismo, churn exacto, AR, MRR mes 13,
+python -m pytest tests/ -q     # 61 pruebas: determinismo, churn exacto, AR, MRR mes 13,
                                # cuellos de botella, reconciliación de caja/P&L/puntos,
-                               # cohortes B2C (equivalencia, matriz, LTV, sensibilidad de hash)
+                               # cohortes B2C (equivalencia, matriz, LTV, sensibilidad de hash),
+                               # campañas, embudo FIFO, gating de rewards, settlements y AR por factura
 ```
 
 ## Mapa de pantallas implementadas
@@ -80,6 +81,10 @@ python -m pytest tests/ -q     # 34 pruebas: determinismo, churn exacto, AR, MRR
 | 24–27 Adquisición B2B (curvas y restricciones) | `/growth-b2b` |
 | 28–29 Adopción B2C (embudo) | `/growth-b2c` |
 | 30 Cohortes y restricciones de crecimiento | `/cohorts` + sección en `/run` |
+| 31, 34–37 Campañas, recompensas, redención, pasivo, ROI | `/campaigns` (hub con tabs) |
+| 32 Nueva campaña | `/campaigns/new` |
+| 33 Detalle de campaña (efectos versionados) | `/campaign` |
+| 38–44 Transacciones, rutas de pago, settlements, AR, aging, conciliación | `/transactions` (hub con tabs) |
 | 50 Centro de supuestos | `/projects/{id}/scenarios/{sid}/assumptions` |
 | 51 Escenarios | `/projects/{id}` (tarjetas de escenario) |
 | 52 Ejecutar simulación | `/projects/{id}/scenarios/{sid}/simulate` |
@@ -90,11 +95,11 @@ python -m pytest tests/ -q     # 34 pruebas: determinismo, churn exacto, AR, MRR
 
 Aritmética `Decimal` en todo el motor con redondeo solo al emitir métricas (16.1). Supuestos versionados que nunca se sobrescriben: cada cambio crea una nueva versión con actor y timestamp, y la jerarquía de resolución es default → proyecto → escenario (pantalla 50). Los escenarios Conservador y Optimista se materializan como overrides explícitos y editables. La distribución 25/5/70 es paramétrica y el servidor valida que sume 100%. Los puntos emitidos no son ingreso: son pasivo con ledger de emisión/redención/expiración. La ruta de pago en caja devenga la comisión y genera cuentas por cobrar con rezago y tasa de cobro; la ruta Stripe cobra de inmediato. El motor explica el cuello de botella de crecimiento de cada mes (curva, presupuesto o capacidad de onboarding). Si el portafolio tiene líneas base, el motor deriva el perfil por cliente del portafolio y lo etiqueta como dato "estimado" en el snapshot y el Excel. Toda mutación relevante escribe `AuditEvent`; la línea base registra `FieldProvenance` por campo. La simulación corre como job con `Idempotency-Key`, y el frontend nunca calcula resultados definitivos: solo el servidor.
 
+**Campañas, embudo de redención y settlements (fase 5).** Cinco motores activables por supuesto, todos apagados por default (con defaults el motor es idéntico al previo — TestGolden26): `campaigns.enabled` (las campañas viajan congeladas en el snapshot con efectos resueltos por la jerarquía defaults → proyecto → escenario → campaña, y modulan solo el comportamiento de compra; el incremental es un contrafactual analítico exacto, sin segunda simulación), `points.funnel.enabled` (redención = intención × conversión con expiración FIFO por edad; 0.50 × 0.70 = la tasa plana previa), `rewards.catalog_gating.enabled` (solo el share elegible del catálogo emite puntos; el residuo regresa al negocio, conservando el split), `payments.settlement.enabled` (flujo bruto por Stripe y liquidación diferida a negocios; con lag 0 y sin fee la caja es idéntica — TestGolden23) y `payments.processing_fee.enabled`. `execute_run` persiste settlements y facturas AR sintéticas por run (append-only), y los efectos de campaña son AssumptionSet con `scope_type="campaign"`, versionados como todo lo demás.
+
 **Cohortes B2C (fase 4).** El modelo de cohortes es activable por supuesto (`b2c.cohort.enabled`), igual que suscripciones y tokens: desactivado, el motor es idéntico al modelo agregado (hay un golden test de equivalencia exacta). Activado, cada mes de altas forma una cohorte con retención dependiente de la antigüedad — converge de `retention_m1` a `retention_stable` a velocidad `retention_ramp` — y la actividad de compra madura linealmente hasta `maturation_months`. El stock inicial se trata como cohorte madura. El motor emite la matriz de cohortes (informativa, fuera del `output_hash`, como los bottlenecks) y el LTV B2C por cohorte (5.6) en el summary. La vista previa de crecimiento (`/growth-preview`) ejecuta el motor en memoria sin persistir nada: el frontend sigue sin calcular resultados.
 
-## Qué sigue (fases 5–8 del roadmap)
-
-Fase 5: campañas, rewards, embudo de redención, transacciones individuales, settlements y AR por factura (31–44). Fase 6: planes de suscripción detallados, ledger de tokens y hiring plan (45–49); los motores agregados ya son activables. Fase 7: sensibilidad, comparador de escenarios y documento ejecutivo (54–55, 71). Fase 8: importación con IA (IA-01 a IA-07) y conectores; el flujo de la sección 8 exige revisión humana antes de persistir, y `ImportJob`/`FieldProvenance` ya existen en el esquema.
+## Qué sigue (fases 6–8 del roadmap) Fase 6: planes de suscripción detallados, ledger de tokens y hiring plan (45–49); los motores agregados ya son activables. Fase 7: sensibilidad, comparador de escenarios y documento ejecutivo (54–55, 71). Fase 8: importación con IA (IA-01 a IA-07) y conectores; el flujo de la sección 8 exige revisión humana antes de persistir, y `ImportJob`/`FieldProvenance` ya existen en el esquema.
 
 ## Verificación realizada
 

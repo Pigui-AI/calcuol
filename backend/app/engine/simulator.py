@@ -30,9 +30,11 @@ def month_label(start_month: str, index: int) -> str:
 
 def _quantize_for(key: str, value: Decimal) -> Decimal:
     if key.startswith(("b2b.", "b2c.", "points.balance", "points.emitted", "points.redeemed",
-                       "points.expired", "rev.subscribers")):
+                       "points.expired", "points.funnel.", "points.business_returned",
+                       "rev.subscribers", "tx.count_", "camp.active_count", "camp.extra_points")):
         return q_count(value)
-    if key.startswith(("ue.ltv_cac", "ue.payback", "ue.take_rate", "pnl.ebitda_margin", "kpi.runway")):
+    if key.startswith(("ue.ltv_cac", "ue.payback", "ue.take_rate", "pnl.ebitda_margin",
+                       "kpi.runway", "camp.roi")):
         return q_rate(value)
     return q_money(value)
 
@@ -99,6 +101,20 @@ def simulate(snapshot: dict) -> dict:
     tokens_adoption = g("tokens.adoption_rate")
     tokens_cost_pct = g("tokens.cost_pct")
 
+    # fase 5: campañas, gating de rewards, embudo de redención, settlements y fees
+    campaigns_on = as_bool(a["campaigns.enabled"])
+    campaigns_all = snapshot.get("campaigns", [])
+    rewards_gating_on = as_bool(a["rewards.catalog_gating.enabled"])
+    eligible_share = g("rewards.eligible_share") if rewards_gating_on else ONE
+    funnel_on = as_bool(a["points.funnel.enabled"])
+    funnel_intent = g("points.funnel.intent_rate")
+    funnel_conv = g("points.funnel.redemption_conversion")
+    funnel_expiry_months = int(g("points.funnel.expiry_months"))
+    fee_on = as_bool(a["payments.processing_fee.enabled"])
+    fee_pct = g("payments.processing_fee_pct")
+    settlement_on = as_bool(a["payments.settlement.enabled"])
+    settlement_lag = int(g("payments.settlement.lag_months"))
+
     opening_cash = g("finance.opening_cash")
     buffer = g("finance.operating_buffer")
     one_time = g("finance.one_time_costs")
@@ -123,6 +139,12 @@ def simulate(snapshot: dict) -> dict:
     metrics: dict[str, list] = {}
     bottlenecks = []
     cash_net_history = []
+    # fase 5: buckets FIFO de puntos [mes_emision, remanente], payable de settlements y logs
+    point_buckets: list[list] = []
+    payable_schedule: dict[int, Decimal] = {}
+    payable_balance = ZERO
+    settlements_log = []
+    ar_invoices_log = []
 
     def emit(key: str, value):
         metrics.setdefault(key, [])
@@ -195,37 +217,75 @@ def simulate(snapshot: dict) -> dict:
         consumers_avg = (consumers_start + consumers_end) / 2
         consumers = consumers_end
 
-        # 4) campañas — fase 5 del roadmap (no modeladas en MVP)
+        # 4) campañas (fase 5): modulan compra/puntos/redención — nunca adquisición
+        #    ni adopción (posición en el orden 4.2). Uplifts aditivos entre campañas.
+        uc = uf = ut = camp_extra_pct = camp_red_uplift = camp_spend = ZERO
+        camp_active = 0
+        if campaigns_on:
+            for camp in campaigns_all:   # congeladas en el snapshot, ordenadas por id
+                if int(camp["start_month"]) <= m <= int(camp["end_month"]):
+                    e = camp["effects"]
+                    camp_active += 1
+                    uc += D(e["campaign.uplift.conversion_pct"])
+                    uf += D(e["campaign.uplift.frequency_pct"])
+                    ut += D(e["campaign.uplift.ticket_pct"])
+                    camp_extra_pct += D(e["campaign.points.extra_pct"])
+                    camp_red_uplift += D(e["campaign.redemption.uplift_pct"])
+                    camp_spend += D(e["campaign.cost_monthly"])
 
-        # 5) transacciones y GMV
+        # 5) transacciones y GMV (uplifts de campaña; identidad exacta si están en cero)
+        conversion_eff = conversion * (ONE + uc)
+        frequency_eff = frequency * (ONE + uf)
+        ticket_eff = ticket * (ONE + ut)
         if cohorts_enabled:
             # la actividad de compra madura con la edad de la cohorte
             buyers = ZERO
             for c, avg_size, age_in_month in month_cohorts:
                 factor = ONE if c["mature"] else activity_factor(age_in_month, initial_activity, maturation_months)
-                buyers += avg_size * conversion * factor
+                buyers += avg_size * conversion_eff * factor
         else:
-            buyers = consumers_avg * conversion
-        transactions = buyers * frequency
-        gmv = transactions * ticket
+            buyers = consumers_avg * conversion_eff
+        transactions = buyers * frequency_eff
+        gmv = transactions * ticket_eff
+        # contrafactual exacto sin segunda simulación: las campañas no tocan stocks
+        camp_factor = (ONE + uc) * (ONE + uf) * (ONE + ut)
+        gmv_base = gmv if camp_factor == ONE else gmv / camp_factor
+        gmv_incremental = gmv - gmv_base
+        tx_count_stripe = transactions * stripe_share
+        tx_count_cash = transactions - tx_count_stripe
+        tx_gmv_stripe = gmv * stripe_share
+        tx_gmv_cash = gmv - tx_gmv_stripe
         eligible_utility = gmv * margin_pct
         direct_costs = gmv - eligible_utility
 
         # 6) ingresos Pigui, puntos, rutas de pago y AR
         if commission_enabled:
             commission = eligible_utility * pigui_pct
-            points_emitted = eligible_utility * points_pct
-            business_net = eligible_utility * business_pct
+            # gating de rewards (pantalla 34): solo el share elegible emite puntos;
+            # el residuo regresa al negocio — conservación del split garantizada
+            points_base = eligible_utility * points_pct * eligible_share
+            points_returned = eligible_utility * points_pct * (ONE - eligible_share)
+            business_net = eligible_utility * business_pct + points_returned
+            revenue_incremental = (eligible_utility - gmv_base * margin_pct) * pigui_pct
         else:
-            commission = points_emitted = ZERO
+            commission = points_base = points_returned = ZERO
             business_net = eligible_utility
+            revenue_incremental = ZERO
+        camp_extra_points = eligible_utility * camp_extra_pct * eligible_share
+        points_emitted_total = points_base + camp_extra_points
 
-        pigui_take_total = commission + points_emitted  # dinero que fluye hacia Pigui (puntos = fondo restringido)
+        pigui_take_total = commission + points_base  # los puntos extra no los paga el negocio
         collected_now = pigui_take_total * stripe_share
         to_ar = pigui_take_total - collected_now
         if to_ar > ZERO:
             due = m + ar_lag
             ar_schedule.setdefault(due, []).append((to_ar * ar_rate, to_ar * (ONE - ar_rate)))
+            ar_invoices_log.append({
+                "number": f"INV-{m:04d}", "month": m, "amount": str(q_money(to_ar)),
+                "due_month": due,
+                "expected_collection": str(q_money(to_ar * ar_rate)),
+                "expected_writeoff": str(q_money(to_ar * (ONE - ar_rate))),
+            })
         ar_balance += to_ar
 
         ar_collections = ZERO
@@ -235,10 +295,66 @@ def simulate(snapshot: dict) -> dict:
             ar_writeoffs += wo
         ar_balance -= (ar_collections + ar_writeoffs)
 
-        # puntos: pasivo append-only (5.4)
-        points_redeemed = points_start * redemption_rate
-        points_expired = points_start * expiry_rate
-        points_balance = points_start + points_emitted - points_redeemed - points_expired
+        # settlements (fase 5, pantalla 41): flujo bruto por Stripe y liquidación diferida
+        if settlement_on:
+            gross_collected = tx_gmv_stripe
+            merchant_due = gross_collected - collected_now
+            due_key = m + settlement_lag
+            payable_schedule[due_key] = payable_schedule.get(due_key, ZERO) + merchant_due
+            paid_out = payable_schedule.pop(m, ZERO)
+            payable_balance = payable_balance + merchant_due - paid_out
+            fee_base = gross_collected
+        else:
+            gross_collected = merchant_due = paid_out = ZERO
+            fee_base = collected_now
+        processing_fee = fee_base * fee_pct if fee_on else ZERO
+        if settlement_on:
+            settlements_log.append({
+                "month": m, "gross_collected": str(q_money(gross_collected)),
+                "processing_fee": str(q_money(processing_fee)),
+                "pigui_take": str(q_money(collected_now)),
+                "merchant_due": str(q_money(merchant_due)),
+                "payout_month": m + settlement_lag,
+            })
+
+        # puntos: pasivo append-only (5.4); embudo FIFO por edad opcional (fase 5)
+        if funnel_on:
+            intent_eff = funnel_intent + camp_red_uplift
+            if intent_eff > ONE:
+                intent_eff = ONE
+            funnel_intents = points_start * intent_eff
+            redeem_target = funnel_intents * funnel_conv
+            points_redeemed = ZERO
+            for bucket in point_buckets:   # FIFO: el más viejo primero
+                if redeem_target <= ZERO:
+                    break
+                take = bucket[1] if bucket[1] <= redeem_target else redeem_target
+                bucket[1] -= take
+                points_redeemed += take
+                redeem_target -= take
+            points_expired = ZERO
+            remaining = []
+            for emit_month, rem in point_buckets:
+                if rem <= ZERO:
+                    continue
+                if (m - emit_month) >= funnel_expiry_months:
+                    points_expired += rem
+                else:
+                    remaining.append([emit_month, rem])
+            point_buckets = remaining
+            if points_emitted_total > ZERO:
+                point_buckets.append([m, points_emitted_total])
+            points_balance = sum((b[1] for b in point_buckets), ZERO)
+        else:
+            # redención + expiración operan sobre el mismo saldo inicial: el clamp
+            # garantiza que juntas nunca debiten más del 100% (con uplift de campaña)
+            red_eff = redemption_rate + camp_red_uplift
+            if red_eff > ONE - expiry_rate:
+                red_eff = ONE - expiry_rate
+            funnel_intents = ZERO
+            points_redeemed = points_start * red_eff
+            points_expired = points_start * expiry_rate
+            points_balance = points_start + points_emitted_total - points_redeemed - points_expired
 
         # suscripciones
         subscribers = ZERO
@@ -286,8 +402,10 @@ def simulate(snapshot: dict) -> dict:
                 continue
             cat_totals[ci["category"]] = cat_totals.get(ci["category"], ZERO) + value
 
-        variable_costs = variable_items_total + tokens_cost
-        opex = fixed_total + acquisition_spend
+        # gasto de campañas: costo directo + puntos extra devengados al emitirse (fase 5)
+        campaigns_expense = camp_spend + camp_extra_points
+        variable_costs = variable_items_total + tokens_cost + processing_fee
+        opex = fixed_total + acquisition_spend + campaigns_expense
 
         # 8) cierre
         gross_margin = revenue_total - variable_costs
@@ -296,9 +414,13 @@ def simulate(snapshot: dict) -> dict:
         ebitda_margin = (ebitda / revenue_total) if revenue_total > ZERO else None
 
         # flujo de efectivo (5.4 / pantalla 60): separar devengo de caja
-        points_paid_out = points_redeemed  # pago a negocios por redenciones
-        cash_in = collected_now + ar_collections + subs_revenue + tokens_revenue
-        cash_out = variable_items_total + tokens_cost + fixed_total + acquisition_spend + points_paid_out
+        points_paid_out = points_redeemed  # pago a negocios por redenciones (incluye puntos extra)
+        # con settlements entra el flujo bruto y sale la liquidación diferida a negocios;
+        # con lag 0 y fee 0 la caja neta es idéntica al modelo sin settlements
+        cash_in = (gross_collected if settlement_on else collected_now) \
+            + ar_collections + subs_revenue + tokens_revenue
+        cash_out = variable_items_total + tokens_cost + fixed_total + acquisition_spend \
+            + points_paid_out + camp_spend + processing_fee + paid_out
         cash_net = cash_in - cash_out
         cash = cash_start + cash_net
         if cash < min_cash:
@@ -339,15 +461,30 @@ def simulate(snapshot: dict) -> dict:
         emit("tx.direct_costs", direct_costs)
         emit("tx.eligible_utility", eligible_utility)
         emit("tx.business_net", business_net)
+        emit("tx.count_stripe", tx_count_stripe)
+        emit("tx.count_cash", tx_count_cash)
+        emit("tx.gmv_stripe", tx_gmv_stripe)
+        emit("tx.gmv_cash", tx_gmv_cash)
+        emit("camp.active_count", camp_active)
+        emit("camp.gmv_incremental", gmv_incremental)
+        emit("camp.revenue_incremental", revenue_incremental)
+        emit("camp.extra_points", camp_extra_points)
+        emit("camp.roi", (revenue_incremental / campaigns_expense) if campaigns_expense > ZERO else ZERO)
+        emit("stl.gross_collected", gross_collected)
+        emit("stl.merchant_due", merchant_due)
+        emit("stl.paid_out", paid_out)
+        emit("stl.payable_end", payable_balance)
         emit("rev.commission", commission)
         emit("rev.subscriptions", subs_revenue)
         emit("rev.subscribers", subscribers)
         emit("rev.tokens", tokens_revenue)
         emit("rev.total", revenue_total)
-        emit("points.emitted", points_emitted)
+        emit("points.emitted", points_base)
         emit("points.redeemed", points_redeemed)
         emit("points.expired", points_expired)
         emit("points.balance_end", points_balance)
+        emit("points.funnel.intents", funnel_intents)
+        emit("points.business_returned", points_returned)
         emit("cash.collected_immediate", collected_now)
         emit("ar.new", to_ar)
         emit("ar.collections", ar_collections)
@@ -357,6 +494,8 @@ def simulate(snapshot: dict) -> dict:
         emit("cost.tokens", tokens_cost)
         emit("cost.fixed", fixed_total)
         emit("cost.acquisition", acquisition_spend)
+        emit("cost.campaigns", campaigns_expense)
+        emit("cost.processing_fees", processing_fee)
         for cat in all_cost_categories:
             emit(f"cost.cat.{cat}", cat_totals.get(cat, ZERO))
         emit("pnl.revenue", revenue_total)
@@ -427,6 +566,16 @@ def simulate(snapshot: dict) -> dict:
             pigui_pct if commission_enabled else ZERO,
             ret_m1, ret_stable, ret_ramp, initial_activity, maturation_months, ltv_horizon,
         )))
+    # resumen de campañas (fase 5) — siempre presente, en cero cuando el motor está apagado
+    camp_spend_total = sum(metrics["cost.campaigns"], ZERO)
+    camp_rev_total = sum(metrics["camp.revenue_incremental"], ZERO)
+    summary["campaigns"] = {
+        "total_spend": str(q_money(camp_spend_total)),
+        "total_extra_points": str(q_count(sum(metrics["camp.extra_points"], ZERO))),
+        "total_gmv_incremental": str(q_money(sum(metrics["camp.gmv_incremental"], ZERO))),
+        "total_revenue_incremental": str(q_money(camp_rev_total)),
+        "roi_total": str(q_rate(camp_rev_total / camp_spend_total)) if camp_spend_total > ZERO else "0",
+    }
 
     # matriz de cohortes para la pantalla de cohortes (solo informativa; no
     # participa del output_hash, igual que los bottlenecks)
@@ -447,6 +596,7 @@ def simulate(snapshot: dict) -> dict:
         "months": labels,
         "metrics": metrics,
         "summary": summary,
-        "logs": {"bottlenecks": bottlenecks, "cohorts": cohorts_log},
+        "logs": {"bottlenecks": bottlenecks, "cohorts": cohorts_log,
+                 "settlements": settlements_log, "ar_invoices": ar_invoices_log},
         "output_hash": output_hash,
     }
