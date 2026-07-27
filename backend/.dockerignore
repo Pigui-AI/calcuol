@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+pigui.db
+exports_files/
+tests/
