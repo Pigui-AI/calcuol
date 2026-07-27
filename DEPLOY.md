@@ -18,7 +18,9 @@ Mientras no exista esa variable, el sitio carga pero muestra un banner ámbar de
 
 ## 2. Backend en Cloud Run
 
-Requiere [gcloud CLI](https://cloud.google.com/sdk/docs/install) autenticado (`gcloud auth login`) y un proyecto activo (`gcloud config set project TU_PROYECTO`).
+**Opción rápida — consola con despliegue continuo desde GitHub:** en Cloud Run → Create service → "Continuously deploy from a repository", selecciona `Pigui-AI/calcuol`, rama `main`, Build type **Dockerfile** y deja la ruta `/Dockerfile` (el Dockerfile de la raíz construye el backend). En "Variables y secretos" agrega `CORS_ORIGINS=https://pigui-ai.github.io` y `RUN_SEEDS=true`, y permite invocaciones sin autenticar.
+
+**Opción CLI:** requiere [gcloud CLI](https://cloud.google.com/sdk/docs/install) autenticado (`gcloud auth login`) y un proyecto activo (`gcloud config set project TU_PROYECTO`).
 
 ```bash
 cd backend
