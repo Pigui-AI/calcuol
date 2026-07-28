@@ -40,8 +40,8 @@ const MENU: { group: string; items: { label: string; href?: string; phase?: stri
   {
     group: "Resultados",
     items: [
-      { label: "Business plan (por run)" },
-      { label: "Dashboard ejecutivo (por run)" },
+      { label: "Business plan", href: "/run/?tab=Plan+mensual" },
+      { label: "Dashboard ejecutivo", href: "/run/" },
       { label: "Sensibilidad", href: "/sensitivity/" },
       { label: "Comparador de escenarios", href: "/compare/" },
       { label: "Conclusiones", href: "/conclusions/" },

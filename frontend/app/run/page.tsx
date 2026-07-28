@@ -1,15 +1,15 @@
 "use client";
 /** Resultados del run — pantallas 53, 56–60, 64–70 y export 72. Ruta estática: /run?project=&id= */
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   ResponsiveContainer, ComposedChart, Line, Bar, XAxis, YAxis, Tooltip, Legend, ReferenceLine,
 } from "recharts";
-import { api, API_URL, RunResults } from "@/lib/api";
+import { api, API_URL, Project, Run, RunResults } from "@/lib/api";
 import { money, num, monthName } from "@/lib/format";
 import MetricTable, { MetricRowDef } from "@/components/MetricTable";
-import { Button, Card, CardBody, ErrorState, KpiCard, SectionTitle, Skeleton } from "@/components/ui";
+import { Button, Card, CardBody, EmptyState, ErrorState, KpiCard, SectionTitle, Skeleton } from "@/components/ui";
 
 const TABS = ["Dashboard", "Plan mensual", "P&L", "Flujo de efectivo", "Unit economics"] as const;
 
@@ -87,11 +87,14 @@ const UE_ROWS: MetricRowDef[] = [
 
 function RunResultsPage() {
   const params = useSearchParams();
+  const router = useRouter();
   const projectId = params.get("project") ?? "";
   const runId = params.get("id") ?? "";
+  const initialTab = TABS.find((t) => t === params.get("tab")) ?? "Dashboard";
   const [data, setData] = useState<RunResults | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<(typeof TABS)[number]>("Dashboard");
+  const [noRun, setNoRun] = useState(false);
+  const [tab, setTab] = useState<(typeof TABS)[number]>(initialTab);
   const [exporting, setExporting] = useState(false);
   const [exportJob, setExportJob] = useState<{ id: string; file_name: string } | null>(null);
 
@@ -102,6 +105,25 @@ function RunResultsPage() {
       .catch((e) => setError(String(e.message)));
   }, [runId]);
   useEffect(load, [load]);
+
+  // Sin run en la URL (entrada desde el menú): resuelve el último run exitoso
+  // del primer escenario del proyecto, o del primer proyecto disponible.
+  useEffect(() => {
+    if (runId) return;
+    const tabQs = params.get("tab") ? `&tab=${encodeURIComponent(params.get("tab") as string)}` : "";
+    api.get<Project[]>("/projects")
+      .then(async (list) => {
+        const project = list.find((p) => p.id === projectId) ?? list[0];
+        if (!project || project.scenarios.length === 0) { setNoRun(true); return; }
+        for (const scenario of project.scenarios) {
+          const runs = await api.get<Run[]>(`/scenarios/${scenario.id}/runs`);
+          const ok = runs.find((r) => r.status === "succeeded");
+          if (ok) { router.replace(`/run/?project=${project.id}&id=${ok.id}${tabQs}`); return; }
+        }
+        setNoRun(true);
+      })
+      .catch((e) => setError(String((e as Error).message)));
+  }, [runId, projectId, params, router]);
 
   const doExport = async (format: "xlsx" | "doc" = "xlsx") => {
     setExporting(true);
@@ -126,7 +148,19 @@ function RunResultsPage() {
     }));
   }, [data]);
 
-  if (!runId) return <ErrorState message="Falta el parámetro ?id= del run" />;
+  if (!runId) {
+    if (noRun) {
+      return (
+        <EmptyState
+          title="Aún no hay resultados"
+          description="El business plan y el dashboard ejecutivo se construyen sobre una simulación. Ejecuta una para verlos."
+          action={<Button href="/">Ir a proyectos</Button>}
+        />
+      );
+    }
+    if (error) return <ErrorState message={error} />;
+    return <Skeleton rows={6} />;
+  }
   if (error && !data) return <ErrorState message={error} onRetry={() => { setError(null); load(); }} />;
   if (!data) return <Skeleton rows={6} />;
 
