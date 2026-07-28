@@ -250,6 +250,19 @@ export interface ConclusionsResponse {
   generated: ConclusionT[]; readiness: ReadinessRow[]; saved: ConclusionT[];
 }
 
+// ---------- roadmap de activación (tutorial guiado) ----------
+export interface OnboardingStep {
+  key: string; order: number; title: string; short: string; icon: string;
+  status: "completado" | "en_progreso" | "pendiente";
+  detail: string | null; href: string; what: string; tip: string;
+}
+export interface OnboardingRoadmap {
+  project: { id: string; name: string } | null;
+  steps: OnboardingStep[];
+  completed: number; total: number; current_key: string | null;
+  imports_committed: number;
+}
+
 export interface HiringRoleT {
   id: string; project_id: string; name: string; department: string; headcount: number;
   monthly_salary: string; start_month: number; end_month: number | null;

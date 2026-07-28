@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { api, Project } from "@/lib/api";
 import { money, STATUS_LABELS } from "@/lib/format";
 import { Badge, Button, Card, CardBody, EmptyState, ErrorState, KpiCard, SectionTitle, Skeleton, inputClass } from "@/components/ui";
+import RoadmapTutorial from "@/components/RoadmapTutorial";
 
 export default function ProjectsPage() {
   const router = useRouter();
@@ -39,6 +40,8 @@ export default function ProjectsPage() {
         subtitle="Administra tus proyectos financieros, escenarios y simulaciones."
         right={<Button href="/projects/new">+ Nuevo proyecto</Button>}
       />
+
+      <RoadmapTutorial />
 
       {error && <ErrorState message={error} onRetry={load} />}
       {!projects && !error && <Skeleton rows={4} />}

@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 
 from app.database import init_db
 from app.routers import (projects, clients, simulations, exports, growth, campaigns,
-                         transactions, secondary, analysis, imports)
+                         transactions, secondary, analysis, imports, onboarding)
 from app.engine.snapshot import ENGINE_VERSION
 
 DEFAULT_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000,https://pigui-ai.github.io"
@@ -42,6 +42,7 @@ app.include_router(transactions.router, tags=["transacciones y settlements (fase
 app.include_router(secondary.router, tags=["ingresos secundarios y costos (fase 6)"])
 app.include_router(analysis.router, tags=["sensibilidad, comparación y conclusiones (fase 7)"])
 app.include_router(imports.router, tags=["importación asistida (fase 8)"])
+app.include_router(onboarding.router, tags=["roadmap de activación"])
 
 
 @app.exception_handler(Exception)
