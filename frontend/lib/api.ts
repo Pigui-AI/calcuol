@@ -208,9 +208,144 @@ export interface TokenLedgerRow {
   unit_cost: string; unit_price: string; amount: string; source: string;
 }
 export interface CostTierT { from: string; to: string | null; rate: string; }
+// ---------- fase 7: sensibilidad, comparación y conclusiones ----------
+export interface SensitivityTarget { key: string; label: string; aggregation: string; }
+export interface SensitivityRow {
+  key: string; baseline_input: string; impact: string;
+  /** presente si el portafolio sobrescribe el supuesto: variarlo no mueve el resultado */
+  overridden_by?: string; effective_value?: string;
+  low_input?: string; high_input?: string;
+  low_value: string | null; high_value: string | null;
+  delta_low: string | null; delta_high: string | null;
+  elasticity_low: string | null; elasticity_high: string | null;
+}
+export interface SensitivityResult {
+  id?: string; target_metric: string; target_label: string; aggregation: string;
+  baseline_value: string; engine_version: string; input_hash: string;
+  results: SensitivityRow[]; created_at?: string | null;
+}
+export interface CompareKpiValue {
+  run_id: string; label: string; value: string | null;
+  delta?: string; delta_pct?: string | null;
+}
+export interface CompareResult {
+  kpis: { key: string; label: string; aggregation: string; values: CompareKpiValue[] }[];
+  assumption_diffs: { key: string; values: { run_id: string; label: string; value: string | null }[] }[];
+  warnings: string[];
+  runs: { id: string; label: string; engine_version: string; horizon_months: number }[];
+}
+export interface ConclusionEvidence {
+  metric_key: string; month_label: string | null; value: string; label: string;
+}
+export interface ConclusionT {
+  id?: string; kind: string; code: string; title: string; body: string;
+  severity: string; evidence: ConclusionEvidence[] | null;
+  status?: string; source?: string; created_at?: string | null;
+}
+export interface ReadinessRow {
+  dimension: string; metric_key: string; value: string | null;
+  month_label: string | null; signal: string;
+}
+export interface ConclusionsResponse {
+  generated: ConclusionT[]; readiness: ReadinessRow[]; saved: ConclusionT[];
+}
+
 export interface HiringRoleT {
   id: string; project_id: string; name: string; department: string; headcount: number;
   monthly_salary: string; start_month: number; end_month: number | null;
   ramp_months: number; onboarding_capacity_per_fte: string; status: string;
   notes: string; created_at: string | null;
+}
+
+// ---------- fase 8: importación con IA (IA-01…IA-07, sección 8) ----------
+/** Tabla detectada en un archivo y la entidad que el servidor le infirió. */
+export interface ImportTableInfo {
+  file?: string; table: string; entity_type: string | null; score: string; rows: number;
+}
+/** Inconsistencia detectada por la validación del servidor (IA-04). */
+export interface ImportIssue {
+  file?: string; entity_ref: string; code: string; severity: string; message: string;
+}
+/** Archivo fuente de una importación, con hash y resumen de parseo (IA-01/IA-02). */
+export interface SourceFileT {
+  id: string; filename: string; kind: string; content_type: string;
+  size_bytes: number; sha256: string; status: string; error: string | null;
+  parse_summary: {
+    tables?: ImportTableInfo[]; text_blocks?: number; proposals?: number; issues?: number;
+  } | null;
+  created_at: string | null;
+}
+/** Propuesta de un campo extraído; `band` y `confidence` los calcula el servidor (8.2). */
+export interface ImportProposalT {
+  id: string; import_job_id: string; source_file_id: string | null;
+  entity_type: string; entity_ref: string; field_name: string; locator: string;
+  raw_value: string; proposed_value: string; unit: string;
+  confidence: string; band: string; source_type: string; status: string;
+  conflict_value: string | null; notes: string;
+}
+/** Resumen del análisis servido en `result_summary` (IA-02 a IA-06). */
+export interface ImportAnalysisSummary {
+  confidence: string;
+  proposals: number;
+  by_band: { alta: number; media: number; baja: number };
+  by_entity: Record<string, number>;
+  issues: number;
+  issues_by_severity: { alta: number; media: number };
+  issues_detail?: ImportIssue[];
+  tables?: ImportTableInfo[];
+  conflicts?: number;
+  low_confidence?: number;
+  files?: { id: string; filename: string; status: string; error: string | null }[];
+  note?: string;
+  committed?: {
+    created: Record<string, number>; updated: Record<string, number>;
+    entities: number; fields: number;
+  };
+  entities_written?: {
+    entity_type: string; entity_ref: string; entity_id: string; fields: number;
+  }[];
+}
+/** Job de importación (ImportJob de la sección 7). */
+export interface ImportJobT {
+  id: string; project_id: string; client_id: string | null; target: string;
+  status: string; file_count: number; confidence: string; band: string;
+  allow_inference: boolean; result_summary: ImportAnalysisSummary | null;
+  error: string | null; created_by: string;
+  created_at: string | null; analyzed_at: string | null; committed_at: string | null;
+}
+/** Propuestas agrupadas por entidad y entity_ref (IA-03/04/05). */
+export interface ImportEntityGroup {
+  entity_type: string; entity_ref: string; confidence: string; band: string;
+  has_conflict: boolean; writable: boolean; fields: ImportProposalT[];
+}
+export interface ImportTotals {
+  proposals: number; entities: number; by_status: Record<string, number>;
+  by_band: { alta: number; media: number; baja: number }; conflicts: number;
+}
+/** Respuesta de GET /imports/{id}. */
+export interface ImportDetail {
+  job: ImportJobT; files: SourceFileT[]; entities: ImportEntityGroup[];
+  totals: ImportTotals; issues: ImportIssue[]; tables: ImportTableInfo[];
+  summary: ImportAnalysisSummary;
+}
+/** Respuesta de POST /imports/{id}/analyze. */
+export interface ImportAnalyzeResult {
+  job: ImportJobT; files: SourceFileT[]; summary: ImportAnalysisSummary;
+}
+/** Respuesta de POST /imports/{id}/commit. */
+export interface ImportCommitResult {
+  job: ImportJobT; created: Record<string, number>; updated: Record<string, number>;
+  entities: { entity_type: string; entity_ref: string; entity_id: string; fields: number }[];
+  fields_written: number;
+}
+/** Fila del historial de importaciones (IA-07). */
+export interface ImportHistoryRow extends ImportJobT {
+  files: SourceFileT[];
+  proposals: { total: number; by_status: Record<string, number>; by_entity: Record<string, number> };
+  entities_affected: Record<string, number> | null;
+  issues: number; conflicts: number;
+}
+export interface ImportHistoryResponse {
+  imports: ImportHistoryRow[];
+  kpis: { count: number; committed: number; in_review: number; failed: number };
 }

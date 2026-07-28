@@ -103,10 +103,11 @@ function RunResultsPage() {
   }, [runId]);
   useEffect(load, [load]);
 
-  const doExport = async () => {
+  const doExport = async (format: "xlsx" | "doc" = "xlsx") => {
     setExporting(true);
     try {
-      const job = await api.post<{ id: string; file_name: string }>("/exports", { run_id: runId });
+      const job = await api.post<{ id: string; file_name: string }>(
+        "/exports", { run_id: runId, format });
       setExportJob(job);
     } catch (e) {
       setError(String((e as Error).message));
@@ -150,9 +151,14 @@ function RunResultsPage() {
                 Descargar {exportJob.file_name}
               </a>
             ) : (
-              <Button onClick={doExport} disabled={exporting}>
-                {exporting ? "Generando…" : "Exportar a Excel"}
-              </Button>
+              <>
+                <Button onClick={() => doExport("xlsx")} disabled={exporting}>
+                  {exporting ? "Generando…" : "Exportar a Excel"}
+                </Button>
+                <Button variant="secondary" onClick={() => doExport("doc")} disabled={exporting}>
+                  Documento ejecutivo
+                </Button>
+              </>
             )}
           </div>
         }

@@ -1,6 +1,6 @@
 # Pigui Financial Engine
 
-Implementación de las Fases 0–6 del roadmap de la **Especificación funcional, financiera, UX y técnica v1.0** del motor de simulaciones hiperrealistas de Pigui.
+Implementación de las Fases 0–8 del roadmap de la **Especificación funcional, financiera, UX y técnica v1.0** del motor de simulaciones hiperrealistas de Pigui.
 
 ## Qué incluye este MVP
 
@@ -63,11 +63,12 @@ Abre http://localhost:3000. La documentación interactiva de la API queda en htt
 
 ```bash
 cd backend
-python -m pytest tests/ -q     # 79 pruebas: determinismo, churn exacto, AR, MRR mes 13,
+python -m pytest tests/ -q     # 119 pruebas: determinismo, churn exacto, AR, MRR mes 13,
                                # cuellos de botella, reconciliación de caja/P&L/puntos,
                                # cohortes B2C (equivalencia, matriz, LTV, sensibilidad de hash),
                                # campañas, embudo FIFO, gating de rewards, settlements, AR por factura,
-                               # planes/trials/MRR bridge, tokens detallado, tiers y hiring plan
+                               # planes/trials/MRR bridge, tokens detallado, tiers, hiring plan,
+                               # sensibilidad, comparación, conclusiones e importación asistida
 ```
 
 ## Mapa de pantallas implementadas
@@ -90,11 +91,15 @@ python -m pytest tests/ -q     # 79 pruebas: determinismo, churn exacto, AR, MRR
 | 46, 63 IA, tokens, recargas y ledger | `/tokens` |
 | 48 Costos e infraestructura (tiers escalonados) | `/costs` |
 | 49 Equipo, capacidad y hiring plan | `/hiring` |
+| 54 Sensibilidad de variables (tornado y elasticidad) | `/sensitivity` |
+| 55 Comparador de escenarios | `/compare` |
+| 70–71 Conclusiones, recomendaciones y readiness VC | `/conclusions` |
+| IA-01…IA-07 Importación asistida con revisión humana | `/import` |
 | 50 Centro de supuestos | `/projects/{id}/scenarios/{sid}/assumptions` |
 | 51 Escenarios | `/projects/{id}` (tarjetas de escenario) |
 | 52 Ejecutar simulación | `/projects/{id}/scenarios/{sid}/simulate` |
 | 53, 56–60, 64–70 Resultados (plan mensual, P&L, cash flow, unit economics, dashboard) | `/projects/{id}/runs/{runId}` |
-| 72 Exportación a Excel | Botón "Exportar a Excel" en resultados |
+| 72 Exportación a Excel y documento ejecutivo (13.2) | Botones "Exportar a Excel" y "Documento ejecutivo" en resultados |
 
 ## Decisiones de implementación fieles al documento
 
@@ -106,7 +111,17 @@ Aritmética `Decimal` en todo el motor con redondeo solo al emitir métricas (16
 
 **Cohortes B2C (fase 4).** El modelo de cohortes es activable por supuesto (`b2c.cohort.enabled`), igual que suscripciones y tokens: desactivado, el motor es idéntico al modelo agregado (hay un golden test de equivalencia exacta). Activado, cada mes de altas forma una cohorte con retención dependiente de la antigüedad — converge de `retention_m1` a `retention_stable` a velocidad `retention_ramp` — y la actividad de compra madura linealmente hasta `maturation_months`. El stock inicial se trata como cohorte madura. El motor emite la matriz de cohortes (informativa, fuera del `output_hash`, como los bottlenecks) y el LTV B2C por cohorte (5.6) en el summary. La vista previa de crecimiento (`/growth-preview`) ejecuta el motor en memoria sin persistir nada: el frontend sigue sin calcular resultados.
 
-## Qué sigue (fases 7–8 del roadmap) Fase 6: planes de suscripción detallados, ledger de tokens y hiring plan (45–49); los motores agregados ya son activables. Fase 7: sensibilidad, comparador de escenarios y documento ejecutivo (54–55, 71). Fase 8: importación con IA (IA-01 a IA-07) y conectores; el flujo de la sección 8 exige revisión humana antes de persistir, y `ImportJob`/`FieldProvenance` ya existen en el esquema.
+## Análisis, conclusiones e importación (fases 7–8)
+
+**Sensibilidad y comparación (54–55).** El análisis vive en `backend/app/engine/analysis.py` como funciones puras: `sensitivity_batch` corre el motor en memoria variando **una sola** palanca por vez sobre el mismo snapshot, y devuelve delta y elasticidad comparables contra el mismo baseline, ordenados por impacto para el tornado. Cuando una palanca la sobrescribe el portafolio (dato derivado), la respuesta lo declara en vez de reportar un impacto cero sin causa. `compare_runs` calcula deltas de KPIs entre runs, lista los supuestos que difieren y advierte si la comparación no es directa (versión del motor, horizonte o moneda distintos).
+
+**Conclusiones y readiness VC (70–71, 16.2).** `derive_conclusions` aplica reglas explicables sobre las métricas del run (break-even, capital, runway, LTV/CAC, payback, margen de contribución, cuellos de botella, calidad de la evidencia) y **cada conclusión cita la métrica, el mes y el valor** que la sustentan: describe lo que el run muestra, sin afirmar causalidad. El usuario acepta, edita o descarta, y puede añadir las suyas. El documento ejecutivo (13.2) se exporta como HTML autocontenido imprimible con las ocho secciones del documento y sin cifras inventadas.
+
+**Importación asistida (IA-01…IA-07).** `backend/app/imports/pipeline.py` normaliza XLSX, CSV, DOCX y PDF a tablas, infiere la entidad destino por sinónimos de encabezado, mapea columnas con una confianza explicable, normaliza valores (`$1,234.50`, `38,50`, `35%` → decimal) y aplica las validaciones de la sección 8 (duplicados, monedas mezcladas, precio ≤ 0, costo > precio, ticket inconsistente, activos > registrados). **Nada se persiste sin revisión humana**: el job vive en estado de revisión y el commit es transaccional — si algo falla se revierte todo y no queda nada a medias. Cada campo escrito deja `FieldProvenance` con el archivo, la celda exacta y la confianza; reimportar el mismo archivo marca los campos como conflicto mostrando el valor vigente y el propuesto. El extractor es determinista y explicable (no llama a un modelo de lenguaje); las bandas de confianza de la sección 8.2 se respetan: las de confianza baja nunca se mapean por defecto.
+
+## Qué sigue
+
+Las ocho fases del roadmap están implementadas. Pendientes conocidos: completar el embudo de campañas de la sección 5.3 (envío → apertura → activación → redención), la compra adicional atribuible (36), las transacciones sin recompensa (37) y los cuatro tipos de recompensa (34); los conectores externos (Pigui Scan/Stripe/Cloud SMB) de la fase 8; y el modelo de roles y permisos de la sección 12.
 
 ## Verificación realizada
 

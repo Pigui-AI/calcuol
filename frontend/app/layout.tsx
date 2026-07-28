@@ -42,7 +42,10 @@ const MENU: { group: string; items: { label: string; href?: string; phase?: stri
     items: [
       { label: "Business plan (por run)" },
       { label: "Dashboard ejecutivo (por run)" },
-      { label: "Importación con IA", phase: "Fase 8" },
+      { label: "Sensibilidad", href: "/sensitivity/" },
+      { label: "Comparador de escenarios", href: "/compare/" },
+      { label: "Conclusiones", href: "/conclusions/" },
+      { label: "Importación con IA", href: "/import/" },
     ],
   },
 ];

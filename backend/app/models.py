@@ -438,6 +438,119 @@ class HiringRole(Base):
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
 
+class SensitivityAnalysis(Base):
+    """Análisis de sensibilidad (pantalla 54): batch de corridas derivadas del
+    snapshot de un run base, cada una con UN cambio controlado. Append-only:
+    los resultados quedan congelados junto al hash del snapshot que los produjo."""
+    __tablename__ = "sensitivity_analyses"
+    id = Column(String(32), primary_key=True, default=new_id)
+    project_id = Column(String(32), ForeignKey("projects.id"), nullable=False)
+    scenario_id = Column(String(32), ForeignKey("scenarios.id"), nullable=False)
+    base_run_id = Column(String(32), ForeignKey("simulation_runs.id"), nullable=True)
+    engine_version = Column(String(20), nullable=False)
+    input_hash = Column(String(64), nullable=False)   # snapshot base congelado
+    target_metric = Column(String(80), nullable=False)  # métrica objetivo del tornado
+    variables = Column(JSON, nullable=False)   # [{key, low, high, baseline}]
+    results = Column(JSON, nullable=False)     # [{key, ..., delta_low, delta_high, elasticity}]
+    baseline_value = Column(MoneyType, nullable=False, default="0")
+    created_by = Column(String(120), default="usuario")
+    created_at = Column(DateTime, default=utcnow)
+    __table_args__ = (Index("ix_sensitivity_lookup", "project_id", "scenario_id"),)
+
+
+class ExecutiveConclusion(Base):
+    """Conclusiones y recomendaciones (pantalla 71). Cada conclusión enlaza a la
+    evidencia (métrica, mes y valor del run) que la respalda: el motor propone
+    con reglas explicables y el usuario acepta, edita o descarta."""
+    __tablename__ = "executive_conclusions"
+    id = Column(String(32), primary_key=True, default=new_id)
+    project_id = Column(String(32), ForeignKey("projects.id"), nullable=False)
+    run_id = Column(String(32), ForeignKey("simulation_runs.id"), nullable=False)
+    kind = Column(String(20), nullable=False, default="hallazgo")
+    # hallazgo | riesgo | accion | readiness
+    code = Column(String(60), nullable=False, default="")   # regla que la originó
+    title = Column(String(200), nullable=False)
+    body = Column(Text, default="")
+    severity = Column(String(20), nullable=False, default="media")  # alta|media|baja
+    evidence = Column(JSON, nullable=True)   # [{metric_key, month_label, value, label}]
+    status = Column(String(20), nullable=False, default="propuesta")
+    # propuesta | aceptada | descartada
+    source = Column(String(20), nullable=False, default="motor")   # motor | usuario
+    created_by = Column(String(120), default="usuario")
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+    __table_args__ = (Index("ix_conclusion_lookup", "run_id", "kind"),)
+
+
+class ImportJob(Base):
+    """Proceso de carga asistida (sección 8, IA-01…IA-07). Nada se persiste en
+    las entidades del proyecto hasta que el usuario confirma: el job vive en
+    estado de revisión hasta el commit transaccional."""
+    __tablename__ = "import_jobs"
+    id = Column(String(32), primary_key=True, default=new_id)
+    project_id = Column(String(32), ForeignKey("projects.id"), nullable=False)
+    client_id = Column(String(32), ForeignKey("clients.id"), nullable=True)  # destino opcional
+    target = Column(String(20), nullable=False, default="auto")
+    # auto | clients | catalog | baseline | costs
+    status = Column(String(20), nullable=False, default="borrador")
+    # borrador | analizando | revision | commiteado | fallido | cancelado
+    file_count = Column(Integer, nullable=False, default=0)
+    confidence = Column(MoneyType, nullable=False, default="0")  # promedio de las propuestas
+    allow_inference = Column(Boolean, nullable=False, default=False)  # 8.1 paso 5
+    result_summary = Column(JSON, nullable=True)
+    error = Column(Text, nullable=True)
+    created_by = Column(String(120), default="usuario")
+    created_at = Column(DateTime, default=utcnow)
+    analyzed_at = Column(DateTime, nullable=True)
+    committed_at = Column(DateTime, nullable=True)
+    __table_args__ = (Index("ix_importjob_lookup", "project_id", "status"),)
+
+
+class SourceFile(Base):
+    """Archivo fuente de una importación (pantalla 22 e IA-07). Conserva hash y
+    resumen de parseo para trazar cada campo hasta su origen."""
+    __tablename__ = "source_files"
+    id = Column(String(32), primary_key=True, default=new_id)
+    import_job_id = Column(String(32), ForeignKey("import_jobs.id"), nullable=False)
+    filename = Column(String(300), nullable=False)
+    content_type = Column(String(120), default="")
+    size_bytes = Column(Integer, nullable=False, default=0)
+    sha256 = Column(String(64), nullable=False, default="")
+    kind = Column(String(10), nullable=False, default="xlsx")  # xlsx|csv|pdf|docx
+    status = Column(String(20), nullable=False, default="cargado")
+    # cargado | parseado | no_soportado | error
+    parse_summary = Column(JSON, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    __table_args__ = (Index("ix_sourcefile_lookup", "import_job_id"),)
+
+
+class ImportProposal(Base):
+    """Propuesta de un valor extraído (IA-03 a IA-05). El usuario acepta, edita,
+    ignora o la marca como hipótesis; solo las aceptadas o editadas se escriben
+    en el commit, y cada una deja FieldProvenance."""
+    __tablename__ = "import_proposals"
+    id = Column(String(32), primary_key=True, default=new_id)
+    import_job_id = Column(String(32), ForeignKey("import_jobs.id"), nullable=False)
+    source_file_id = Column(String(32), ForeignKey("source_files.id"), nullable=True)
+    entity_type = Column(String(40), nullable=False)  # Client|Branch|ProductService|ClientBaseline|CostItem
+    entity_ref = Column(String(120), nullable=False, default="")  # agrupa las filas de una misma entidad
+    field_name = Column(String(80), nullable=False)
+    locator = Column(String(200), default="")   # hoja/celda o sección del documento
+    raw_value = Column(Text, default="")
+    proposed_value = Column(Text, default="")
+    unit = Column(String(30), default="")
+    confidence = Column(MoneyType, nullable=False, default="0")   # 0–1
+    source_type = Column(String(20), nullable=False, default="declarado")  # 7.1
+    status = Column(String(20), nullable=False, default="propuesta")
+    # propuesta | aceptada | editada | ignorada | conflicto
+    conflict_value = Column(Text, nullable=True)   # valor vigente cuando hay conflicto
+    notes = Column(Text, default="")
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+    __table_args__ = (Index("ix_proposal_lookup", "import_job_id", "entity_type", "entity_ref"),)
+
+
 class ExportJob(Base):
     __tablename__ = "export_jobs"
     id = Column(String(32), primary_key=True, default=new_id)

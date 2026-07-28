@@ -137,7 +137,7 @@ class RunCreate(BaseModel):
 
 class ExportCreate(BaseModel):
     run_id: str
-    format: str = "xlsx"
+    format: str = "xlsx"  # xlsx (workbook 13.1) | doc (documento ejecutivo 13.2)
 
 
 class TransactionIn(BaseModel):
@@ -234,3 +234,55 @@ class HiringRolePatch(BaseModel):
     ramp_months: Optional[int] = None
     onboarding_capacity_per_fte: Optional[str] = None
     notes: Optional[str] = None
+
+
+class SensitivityVariableIn(BaseModel):
+    """Variable del tornado (pantalla 54): un supuesto y sus dos extremos.
+    Los extremos son opcionales por separado, pero se requiere al menos uno."""
+    key: str
+    low: Optional[str] = None
+    high: Optional[str] = None
+
+
+class SensitivityRunIn(BaseModel):
+    """Batch de sensibilidad (pantalla 54). Sin base_run_id se usa el snapshot
+    vigente del escenario; con él, el snapshot congelado de ese run."""
+    target_metric: str = "pnl.ebitda"
+    variables: list[SensitivityVariableIn] = []
+    base_run_id: Optional[str] = None
+    actor: str = "usuario"
+
+
+class ConclusionCreate(BaseModel):
+    """Conclusión capturada por el usuario (pantalla 71). El motor propone en
+    GET /simulation-runs/{id}/conclusions; esto guarda la versión aceptada."""
+    kind: str = "hallazgo"     # hallazgo|riesgo|accion|readiness
+    code: str = ""
+    title: str = Field(min_length=1, max_length=200)
+    body: str = ""
+    severity: str = "media"    # alta|media|baja
+    evidence: Optional[list[dict]] = None
+    actor: str = "usuario"
+
+
+class ImportProposalPatch(BaseModel):
+    """Revisión humana de una propuesta (IA-05). Enviar `proposed_value` implica
+    que el estado pasa a 'editada'; nada se persiste en el proyecto hasta el commit."""
+    status: Optional[str] = None          # aceptada|editada|ignorada
+    proposed_value: Optional[str] = None
+    source_type: Optional[str] = None     # 7.1: real|declarado|estimado|hipotesis|meta
+    notes: Optional[str] = None
+    actor: str = "usuario"
+
+
+class ImportActionIn(BaseModel):
+    """Cuerpo mínimo de las acciones de un job de importación (IA-02, IA-06, IA-07)."""
+    actor: str = "usuario"
+
+
+class ConclusionPatch(BaseModel):
+    status: Optional[str] = None   # propuesta|aceptada|descartada
+    title: Optional[str] = None
+    body: Optional[str] = None
+    severity: Optional[str] = None
+    actor: str = "usuario"
