@@ -255,6 +255,7 @@ export interface OnboardingStep {
   key: string; order: number; title: string; short: string; icon: string;
   status: "completado" | "en_progreso" | "pendiente";
   detail: string | null; href: string; what: string; tip: string;
+  eli5: string; hands_on: string[];
 }
 export interface OnboardingRoadmap {
   project: { id: string; name: string } | null;

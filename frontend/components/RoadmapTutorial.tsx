@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api, OnboardingRoadmap, OnboardingStep } from "@/lib/api";
 import { Button } from "@/components/ui";
+import TutorialScene from "@/components/TutorialScenes";
 
 const ICONS: Record<string, React.ReactNode> = {
   folder: <path d="M3 7a2 2 0 0 1 2-2h3.6l1.7 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />,
@@ -67,6 +68,36 @@ function StepDetail({ step }: { step: OnboardingStep }) {
         <span className={`shrink-0 text-xs font-medium ${meta.text}`}>{meta.label}</span>
       </div>
       <p className="mt-2 text-sm leading-relaxed text-slate-600">{step.what}</p>
+
+      <div className="mt-3">
+        <TutorialScene stepKey={step.key} />
+      </div>
+
+      <div className="mt-3 rounded-md border border-sky-100 bg-sky-50/70 px-3 py-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-sky-700">
+          🧒 Explicado fácil
+        </p>
+        <p className="mt-0.5 text-xs leading-relaxed text-slate-700">{step.eli5}</p>
+      </div>
+
+      {step.hands_on.length > 0 && (
+        <div className="mt-2 rounded-md bg-slate-50 px-3 py-2">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+            👉 Hazlo tú, clic por clic
+          </p>
+          <ol className="mt-1 space-y-1">
+            {step.hands_on.map((h, i) => (
+              <li key={i} className="flex gap-2 text-xs leading-relaxed text-slate-600">
+                <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-pigui-100 text-[10px] font-semibold text-pigui-700">
+                  {i + 1}
+                </span>
+                {h}
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+
       <p className="mt-2 rounded-md bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-600">
         <span className="font-semibold text-slate-700">Para tenerlo en cuenta: </span>{step.tip}
       </p>
