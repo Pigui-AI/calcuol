@@ -115,6 +115,12 @@ export interface Run {
   summary?: RunSummary;
   bottlenecks?: BottleneckRow[];
   cohorts?: CohortRow[];
+  subs_cohorts?: SubsCohortRow[];
+  token_ledger?: TokenMovementLog[];
+}
+export interface TokenMovementLog {
+  month: number; movement_type: string; units: string;
+  unit_cost?: string; unit_price?: string; amount?: string;
 }
 export interface RunResults {
   run: Run; months: string[]; metrics: Record<string, (string | null)[]>;
@@ -177,4 +183,34 @@ export interface ArInvoiceRow {
 export interface ArInvoicesResponse {
   invoices: ArInvoiceRow[];
   aging: { por_cobrar_corriente: string; cobrado_esperado: string; castigo_esperado: string };
+}
+
+// ---------- fase 6: suscripciones, tokens, costos escalonados, hiring ----------
+export interface SubscriptionPlanT {
+  id: string; project_id: string; name: string; description: string;
+  price_monthly: string; currency: string; trial_kind: string; trial_conversion: string;
+  adoption_rate: string; start_month: number; ramp_months: number; churn_rate: string;
+  upgrade_to_plan_id: string | null; upgrade_rate: string; included_token_credits: string;
+  branch_limit: number | null; status: string; created_at: string | null;
+}
+export interface SubscriptionT {
+  id: string; project_id: string; client_id: string; plan_id: string;
+  start_date: string; trial_end: string | null; status: string; mrr: string;
+  source_type: string; created_at: string | null; canceled_at: string | null;
+}
+export interface SubsCohortRow {
+  plan_id: string; plan_name: string; trial_kind: string; cohort_month: number;
+  starts: string; decision_month: number; conversions: string; conversion_rate: string;
+}
+export interface TokenLedgerRow {
+  id: number; run_id: string; month_index: number; month_label: string;
+  client_id: string | null; movement_type: string; units: string;
+  unit_cost: string; unit_price: string; amount: string; source: string;
+}
+export interface CostTierT { from: string; to: string | null; rate: string; }
+export interface HiringRoleT {
+  id: string; project_id: string; name: string; department: string; headcount: number;
+  monthly_salary: string; start_month: number; end_month: number | null;
+  ramp_months: number; onboarding_capacity_per_fte: string; status: string;
+  notes: string; created_at: string | null;
 }

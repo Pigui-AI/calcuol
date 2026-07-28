@@ -87,12 +87,29 @@ DEFAULTS = {
     "subs.adoption_rate":             ("0.30", "%", "Adopción sobre clientes activos"),
     "subs.ramp_months":               ("6", "meses", "Meses para alcanzar adopción plena"),
 
+    # --- Suscripciones detalladas (fase 6, pantallas 45/47/62) ---
+    "subs.detail.enabled":            ("false", "bool", "Modo detallado por plan/trial; requiere subs.enabled y planes activos"),
+
     # --- IA / tokens (3.4) ---
     "tokens.enabled":                 ("false", "bool", "Motor de IA/tokens activo"),
     "tokens.start_month":             ("13", "meses", "Mes de activación"),
     "tokens.revenue_per_client_monthly": ("150", "MXN", "Ingreso promedio de IA por cliente adoptante"),
     "tokens.adoption_rate":           ("0.40", "%", "Adopción sobre clientes activos"),
     "tokens.cost_pct":                ("0.40", "%", "Costo del proveedor sobre ingreso de IA"),
+
+    # --- IA / tokens detallado (fase 6, pantallas 46/63) ---
+    "tokens.detail.enabled":          ("false", "bool", "Modo detallado de IA/tokens; requiere tokens.enabled"),
+    "tokens.consumption_per_adopter_monthly": ("100", "unidades", "Consumo mensual por cliente adoptante"),
+    "tokens.included_per_adopter_monthly": ("0", "unidades", "Créditos incluidos/mes por adoptante (mandan los planes si subs.detail está activo)"),
+    "tokens.overage_price_per_unit":  ("1.50", "MXN", "Precio por unidad excedente"),
+    "tokens.provider_cost_per_unit":  ("0.60", "MXN", "Costo real del proveedor por unidad consumida"),
+    "tokens.recharge_share":          ("0", "%", "Parte del overage cubierta con recargas prepagadas"),
+    "tokens.recharge_price_per_unit": ("1.20", "MXN", "Precio por unidad en recarga (bundle con descuento)"),
+    "tokens.initial_credit_units":    ("0", "unidades", "Crédito inicial por adoptante otorgado en tokens.start_month"),
+    "tokens.credit_expiry_months":    ("6", "meses", "Expiración del crédito inicial no consumido"),
+
+    # --- Hiring plan (fase 6, pantalla 49) ---
+    "hiring.capacity.enabled":        ("false", "bool", "La capacidad de los roles con ramp sustituye b2b.onboarding_capacity_monthly"),
 
     # --- Finanzas (5.6) ---
     "finance.opening_cash":           ("0", "MXN", "Caja inicial"),

@@ -31,10 +31,11 @@ def month_label(start_month: str, index: int) -> str:
 def _quantize_for(key: str, value: Decimal) -> Decimal:
     if key.startswith(("b2b.", "b2c.", "points.balance", "points.emitted", "points.redeemed",
                        "points.expired", "points.funnel.", "points.business_returned",
-                       "rev.subscribers", "tx.count_", "camp.active_count", "camp.extra_points")):
+                       "rev.subscribers", "tx.count_", "camp.active_count", "camp.extra_points",
+                       "subs.", "tokens.units.", "hiring.")):
         return q_count(value)
     if key.startswith(("ue.ltv_cac", "ue.payback", "ue.take_rate", "pnl.ebitda_margin",
-                       "kpi.runway", "camp.roi")):
+                       "kpi.runway", "camp.roi", "tokens.margin_pct")):
         return q_rate(value)
     return q_money(value)
 
@@ -42,6 +43,13 @@ def _quantize_for(key: str, value: Decimal) -> Decimal:
 def simulate(snapshot: dict) -> dict:
     eff = effective_from_snapshot(snapshot)
     a = eff["assumptions"]
+    # la sustitución de capacidad por hiring (fase 6, 49→30) se reporta como derivado
+    if as_bool(a.get("hiring.capacity.enabled", "false")):
+        eff["derived"]["b2b.onboarding_capacity_monthly"] = {
+            "from": a.get("b2b.onboarding_capacity_monthly"),
+            "to": "capacidad del hiring plan (rampa mensual)",
+            "source": "hiring plan",
+        }
     horizon = int(snapshot["project"]["horizon_months"])
     start = snapshot["project"]["start_month"]
 
@@ -101,6 +109,21 @@ def simulate(snapshot: dict) -> dict:
     tokens_adoption = g("tokens.adoption_rate")
     tokens_cost_pct = g("tokens.cost_pct")
 
+    # fase 6: modos detallados (suscripciones por plan/trial, tokens por unidad, hiring)
+    plans_all = snapshot.get("subscription_plans", [])
+    subs_detailed = as_bool(a["subs.detail.enabled"]) and subs_enabled and bool(plans_all)
+    tokens_detailed = as_bool(a["tokens.detail.enabled"]) and tokens_enabled
+    tok_consumption = g("tokens.consumption_per_adopter_monthly")
+    tok_included = g("tokens.included_per_adopter_monthly")
+    tok_overage_price = g("tokens.overage_price_per_unit")
+    tok_provider_cost = g("tokens.provider_cost_per_unit")
+    tok_recharge_share = g("tokens.recharge_share")
+    tok_recharge_price = g("tokens.recharge_price_per_unit")
+    tok_initial_credit = g("tokens.initial_credit_units")
+    tok_credit_expiry = int(g("tokens.credit_expiry_months"))
+    hiring_roles = snapshot.get("hiring_roles", [])
+    hiring_cap_on = as_bool(a["hiring.capacity.enabled"])
+
     # fase 5: campañas, gating de rewards, embudo de redención, settlements y fees
     campaigns_on = as_bool(a["campaigns.enabled"])
     campaigns_all = snapshot.get("campaigns", [])
@@ -120,7 +143,8 @@ def simulate(snapshot: dict) -> dict:
     one_time = g("finance.one_time_costs")
 
     cost_items = snapshot.get("cost_items", [])
-    all_cost_categories = sorted({ci["category"] for ci in cost_items})
+    all_cost_categories = sorted({ci["category"] for ci in cost_items}
+                                 | {r.get("department") or "nomina" for r in hiring_roles})
 
     # ---------- estado ----------
     clients = b2b_initial
@@ -145,6 +169,15 @@ def simulate(snapshot: dict) -> dict:
     payable_balance = ZERO
     settlements_log = []
     ar_invoices_log = []
+    # fase 6: estado de suscripciones detalladas, tokens detallados y sus logs
+    plan_by_id = {p["id"]: p for p in plans_all}
+    subs_active: dict[str, Decimal] = {p["id"]: ZERO for p in plans_all}
+    subs_prev_target: dict[str, Decimal] = {p["id"]: ZERO for p in plans_all}
+    trial_pipeline: list[dict] = []
+    subs_cohorts_log = []
+    token_ledger_log = []
+    credit_pool = ZERO
+    credit_granted_month = 0
 
     def emit(key: str, value):
         metrics.setdefault(key, [])
@@ -161,6 +194,28 @@ def simulate(snapshot: dict) -> dict:
         cash_start = cash
         points_start = points_balance
 
+        # hiring plan (fase 6, pantalla 49): nómina COMPLETA desde la fecha efectiva;
+        # la capacidad de onboarding rampa y puede sustituir el supuesto (49→30)
+        payroll = ZERO
+        headcount_total = ZERO
+        capacity_hiring = ZERO
+        cat_hiring: dict[str, Decimal] = {}
+        for role in hiring_roles:
+            r_start = int(role["start_month"])
+            r_end = role.get("end_month")
+            if m < r_start or (r_end is not None and m > int(r_end)):
+                continue
+            hc = D(role["headcount"])
+            salary = hc * D(role["monthly_salary"])
+            payroll += salary
+            dep = role.get("department") or "nomina"
+            cat_hiring[dep] = cat_hiring.get(dep, ZERO) + salary
+            headcount_total += hc
+            r_ramp = int(role["ramp_months"])
+            ramp_f = ONE if r_ramp <= 1 else min(ONE, D(m - r_start + 1) / D(r_ramp))
+            capacity_hiring += hc * D(role["onboarding_capacity_per_fte"]) * ramp_f
+        onboarding_cap_eff = capacity_hiring if hiring_cap_on else onboarding_cap
+
         # 2) adquisición B2B
         target = curve_target(curve_type, m, b2b_initial, curve_max, curve_rate, curve_inflection)
         churned = clients_start * churn_b2b
@@ -173,17 +228,21 @@ def simulate(snapshot: dict) -> dict:
         adds = desired
         if budget_cap < adds:
             adds, constraint = budget_cap, "presupuesto"
-        if onboarding_cap < adds:
-            adds, constraint = onboarding_cap, "capacidad_onboarding"
+        if onboarding_cap_eff < adds:
+            adds, constraint = onboarding_cap_eff, "capacidad_onboarding"
         clients_end = clients_start + adds + reactivated - churned
         churned_pool = churned_pool + churned - reactivated
         clients_avg = (clients_start + clients_end) / 2
         clients = clients_end
-        bottlenecks.append({
+        bottleneck_row = {
             "month": m, "objetivo_curva": str(q_count(target)),
             "altas_deseadas": str(q_count(desired)), "altas_activadas": str(q_count(adds)),
             "restriccion_activa": constraint if adds < desired or constraint != "curva" else "curva",
-        })
+            "capacidad_onboarding": str(q_count(onboarding_cap_eff)),
+        }
+        if hiring_cap_on:
+            bottleneck_row["fuente_capacidad"] = "hiring"
+        bottlenecks.append(bottleneck_row)
 
         # 3) adopción B2C
         new_from_new_clients = adds * consumers_per_client
@@ -356,18 +415,151 @@ def simulate(snapshot: dict) -> dict:
             points_expired = points_start * expiry_rate
             points_balance = points_start + points_emitted_total - points_redeemed - points_expired
 
-        # suscripciones
+        # suscripciones — agregado (fase 3) o detallado por plan/trial (fase 6, 45/47/62)
         subscribers = ZERO
         subs_revenue = ZERO
-        if subs_enabled and m >= subs_start:
+        mrr_start = mrr_new = mrr_exp = mrr_con = mrr_churn = mrr_end = ZERO
+        trial_starts_m = conversions_m = ZERO
+        if subs_detailed:
+            mrr_start = sum((subs_active[p["id"]] * D(p["price_monthly"]) for p in plans_all), ZERO)
+            # (a) churn por plan sobre activos al inicio (los nuevos del mes no churnean)
+            for p in plans_all:
+                churned_p = subs_active[p["id"]] * D(p["churn_rate"])
+                subs_active[p["id"]] -= churned_p
+                mrr_churn += churned_p * D(p["price_monthly"])
+            # (b) upgrades/downgrades: el signo del delta decide el lado del bridge (62)
+            for p in plans_all:
+                dest = p.get("upgrade_to_plan_id")
+                if not dest or dest not in subs_active:
+                    continue
+                moved = subs_active[p["id"]] * D(p["upgrade_rate"])
+                if moved <= ZERO:
+                    continue
+                subs_active[p["id"]] -= moved
+                subs_active[dest] += moved
+                delta = D(plan_by_id[dest]["price_monthly"]) - D(p["price_monthly"])
+                if delta > ZERO:
+                    mrr_exp += moved * delta
+                else:
+                    mrr_con += moved * (-delta)
+            # (c) conversiones de trials con tarjeta cuya decisión es este mes (47)
+            half_month_value = ZERO
+            remaining_pipeline = []
+            for c in trial_pipeline:
+                if c["decision_month"] != m:
+                    remaining_pipeline.append(c)
+                    continue
+                p = plan_by_id[c["plan_id"]]
+                conv = c["size"] * D(p["trial_conversion"])
+                subs_active[p["id"]] += conv
+                mrr_new += conv * D(p["price_monthly"])
+                conversions_m += conv
+                subs_cohorts_log.append({
+                    "plan_id": p["id"], "plan_name": p["name"], "trial_kind": p["trial_kind"],
+                    "cohort_month": c["cohort_month"], "starts": str(q_count(c["size"])),
+                    "decision_month": m, "conversions": str(q_count(conv)),
+                    "conversion_rate": str(q_rate(D(p["trial_conversion"]))),
+                })
+            trial_pipeline = remaining_pipeline
+            # (d) nuevos trials: solo el INCREMENTO del objetivo entra — nunca doble trial (47)
+            for p in plans_all:
+                p_start = int(p["start_month"])
+                if m < p_start:
+                    continue
+                p_ramp = int(p["ramp_months"])
+                ramp_f = ONE if p_ramp <= 1 else min(ONE, D(m - p_start + 1) / D(p_ramp))
+                gross_target = clients_end * D(p["adoption_rate"]) * ramp_f
+                entrants = gross_target - subs_prev_target[p["id"]]
+                subs_prev_target[p["id"]] = max(subs_prev_target[p["id"]], gross_target)
+                if entrants <= ZERO:
+                    continue
+                kind = p["trial_kind"]
+                if kind == "none":
+                    subs_active[p["id"]] += entrants
+                    mrr_new += entrants * D(p["price_monthly"])
+                elif kind == "sin_tarjeta_15":
+                    # decide dentro del mismo mes: el converso paga media mensualidad
+                    trial_starts_m += entrants
+                    conv = entrants * D(p["trial_conversion"])
+                    subs_active[p["id"]] += conv
+                    mrr_new += conv * D(p["price_monthly"])
+                    conversions_m += conv
+                    half_month_value += conv * D(p["price_monthly"]) / 2
+                    subs_cohorts_log.append({
+                        "plan_id": p["id"], "plan_name": p["name"], "trial_kind": kind,
+                        "cohort_month": m, "starts": str(q_count(entrants)),
+                        "decision_month": m, "conversions": str(q_count(conv)),
+                        "conversion_rate": str(q_rate(D(p["trial_conversion"]))),
+                    })
+                elif kind == "con_tarjeta_30":
+                    # decide al abrir el mes siguiente y paga mensualidad completa
+                    trial_starts_m += entrants
+                    trial_pipeline.append({"plan_id": p["id"], "cohort_month": m,
+                                           "size": entrants, "decision_month": m + 1})
+            mrr_end = sum((subs_active[p["id"]] * D(p["price_monthly"]) for p in plans_all), ZERO)
+            subs_revenue = mrr_end - half_month_value
+            subscribers = sum(subs_active.values(), ZERO)
+        elif subs_enabled and m >= subs_start:
             ramp = D(min(subs_ramp, m - subs_start + 1)) / D(subs_ramp)
             subscribers = clients_end * subs_adoption * ramp
             subs_revenue = subscribers * subs_price
 
-        # IA / tokens
+        # IA / tokens — agregado (fase 3) o detallado por unidad (fase 6, 46/63)
         tokens_revenue = ZERO
         tokens_cost = ZERO
-        if tokens_enabled and m >= tokens_start:
+        tokens_rev_overage = tokens_rev_recharges = ZERO
+        tok_units = {"consumed": ZERO, "included": ZERO, "included_expired": ZERO,
+                     "credit_used": ZERO, "credit_expired": ZERO, "overage": ZERO,
+                     "recharge": ZERO}
+        if tokens_detailed and m >= tokens_start:
+            adopters = clients_end * tokens_adoption
+            consumed = adopters * tok_consumption
+            plan_credits = sum((subs_active[p["id"]] * D(p["included_token_credits"])
+                                for p in plans_all), ZERO) if subs_detailed else ZERO
+            if subs_detailed and plan_credits > ZERO:
+                included_allowance = plan_credits   # mandan los créditos de los planes (46)
+            else:
+                included_allowance = adopters * tok_included
+            covered = min(consumed, included_allowance)
+            included_expired = included_allowance - covered   # incluidos sin rollover
+            rem = consumed - covered
+            if m == tokens_start and tok_initial_credit > ZERO:
+                credit_pool = adopters * tok_initial_credit
+                credit_granted_month = m
+                token_ledger_log.append({"month": m, "movement_type": "credito_inicial",
+                                         "units": str(q_count(credit_pool))})
+            from_credit = min(rem, credit_pool)
+            credit_pool -= from_credit
+            rem -= from_credit
+            credit_expired = ZERO
+            if credit_pool > ZERO and credit_granted_month \
+                    and (m - credit_granted_month) >= tok_credit_expiry:
+                credit_expired, credit_pool = credit_pool, ZERO
+            overage_units = rem
+            recharge_units = overage_units * tok_recharge_share
+            payg_units = overage_units - recharge_units
+            tokens_rev_overage = payg_units * tok_overage_price
+            tokens_rev_recharges = recharge_units * tok_recharge_price
+            tokens_revenue = tokens_rev_overage + tokens_rev_recharges
+            tokens_cost = consumed * tok_provider_cost   # costo unidad × consumo (46)
+            tok_units.update(consumed=consumed, included=covered,
+                             included_expired=included_expired, credit_used=from_credit,
+                             credit_expired=credit_expired, overage=overage_units,
+                             recharge=recharge_units)
+            for mtype, units, ucost, uprice, amount in (
+                ("consumo", consumed, tok_provider_cost, ZERO, tokens_cost),
+                ("incluido", covered, ZERO, ZERO, ZERO),
+                ("overage", payg_units, ZERO, tok_overage_price, tokens_rev_overage),
+                ("recarga", recharge_units, ZERO, tok_recharge_price, tokens_rev_recharges),
+                ("expiracion", included_expired + credit_expired, ZERO, ZERO, ZERO),
+            ):
+                if units > ZERO:
+                    token_ledger_log.append({
+                        "month": m, "movement_type": mtype, "units": str(q_count(units)),
+                        "unit_cost": str(q_money(ucost)), "unit_price": str(q_money(uprice)),
+                        "amount": str(q_money(amount)),
+                    })
+        elif tokens_enabled and m >= tokens_start:
             tokens_revenue = clients_end * tokens_adoption * tokens_rev_per_client
             tokens_cost = tokens_revenue * tokens_cost_pct
 
@@ -398,14 +590,31 @@ def simulate(snapshot: dict) -> dict:
             elif behavior == "pct_gmv":
                 value = amount * gmv
                 variable_items_total += value
+            elif behavior in ("tiered_per_active_client", "tiered_per_transaction", "tiered_pct_gmv"):
+                # escalonados (fase 6, pantalla 48): costo = fijo + Σ tramos MARGINALES
+                driver = clients_avg if behavior == "tiered_per_active_client" \
+                    else transactions if behavior == "tiered_per_transaction" else gmv
+                tier_part = ZERO
+                for t in ci.get("tiers", []):   # ordenados por "from"
+                    lo = D(t["from"])
+                    hi = driver if t["to"] is None else min(driver, D(t["to"]))
+                    span = hi - lo
+                    if span > ZERO:
+                        tier_part += span * D(t["rate"])
+                fixed_total += amount             # componente fijo → OPEX (5.5)
+                variable_items_total += tier_part  # tramos por driver → costos variables (5.5)
+                value = amount + tier_part
             else:
                 continue
             cat_totals[ci["category"]] = cat_totals.get(ci["category"], ZERO) + value
 
         # gasto de campañas: costo directo + puntos extra devengados al emitirse (fase 5)
         campaigns_expense = camp_spend + camp_extra_points
+        # nómina del hiring plan → OPEX y categorías (fase 6, pantalla 49 / 5.5)
+        for dep, val in cat_hiring.items():
+            cat_totals[dep] = cat_totals.get(dep, ZERO) + val
         variable_costs = variable_items_total + tokens_cost + processing_fee
-        opex = fixed_total + acquisition_spend + campaigns_expense
+        opex = fixed_total + acquisition_spend + campaigns_expense + payroll
 
         # 8) cierre
         gross_margin = revenue_total - variable_costs
@@ -420,7 +629,7 @@ def simulate(snapshot: dict) -> dict:
         cash_in = (gross_collected if settlement_on else collected_now) \
             + ar_collections + subs_revenue + tokens_revenue
         cash_out = variable_items_total + tokens_cost + fixed_total + acquisition_spend \
-            + points_paid_out + camp_spend + processing_fee + paid_out
+            + points_paid_out + camp_spend + processing_fee + paid_out + payroll
         cash_net = cash_in - cash_out
         cash = cash_start + cash_net
         if cash < min_cash:
@@ -479,6 +688,29 @@ def simulate(snapshot: dict) -> dict:
         emit("rev.subscribers", subscribers)
         emit("rev.tokens", tokens_revenue)
         emit("rev.total", revenue_total)
+        emit("rev.mrr.start", mrr_start)
+        emit("rev.mrr.new", mrr_new)
+        emit("rev.mrr.expansion", mrr_exp)
+        emit("rev.mrr.contraction", mrr_con)
+        emit("rev.mrr.churned", mrr_churn)
+        emit("rev.mrr.end", mrr_end)
+        emit("subs.trial_starts", trial_starts_m)
+        emit("subs.trial_active", sum((c["size"] for c in trial_pipeline), ZERO))
+        emit("subs.conversions", conversions_m)
+        emit("subs.active_total", subscribers if subs_detailed else ZERO)
+        for p in plans_all:
+            emit(f"subs.plan.{p['id']}.active", subs_active[p["id"]])
+        emit("rev.tokens.overage", tokens_rev_overage)
+        emit("rev.tokens.recharges", tokens_rev_recharges)
+        for uk, uv in tok_units.items():
+            emit(f"tokens.units.{uk}", uv)
+        emit("tokens.unit_margin", (tok_overage_price - tok_provider_cost) if tokens_detailed else ZERO)
+        emit("tokens.margin_pct",
+             ((tokens_revenue - tokens_cost) / tokens_revenue) if tokens_revenue > ZERO else ZERO)
+        emit("cost.hiring", payroll)
+        emit("hiring.headcount", headcount_total)
+        emit("hiring.onboarding_capacity", capacity_hiring)
+        emit("b2b.onboarding_capacity", onboarding_cap_eff)
         emit("points.emitted", points_base)
         emit("points.redeemed", points_redeemed)
         emit("points.expired", points_expired)
@@ -597,6 +829,7 @@ def simulate(snapshot: dict) -> dict:
         "metrics": metrics,
         "summary": summary,
         "logs": {"bottlenecks": bottlenecks, "cohorts": cohorts_log,
-                 "settlements": settlements_log, "ar_invoices": ar_invoices_log},
+                 "settlements": settlements_log, "ar_invoices": ar_invoices_log,
+                 "subs_cohorts": subs_cohorts_log, "token_ledger": token_ledger_log},
         "output_hash": output_hash,
     }

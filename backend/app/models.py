@@ -331,6 +331,113 @@ class ArInvoice(Base):
     __table_args__ = (Index("ix_arinv_lookup", "run_id", "month_index"),)
 
 
+class SubscriptionPlan(Base):
+    """Plan de suscripción (pantalla 45, sección 3.4): plan, trial, precio, conversión,
+    upgrades/downgrades, churn, sucursales, límites. Config del motor detallado;
+    se archiva, jamás se borra. Sus parámetros se congelan en el snapshot."""
+    __tablename__ = "subscription_plans"
+    id = Column(String(32), primary_key=True, default=new_id)
+    project_id = Column(String(32), ForeignKey("projects.id"), nullable=False)
+    name = Column(String(120), nullable=False)
+    description = Column(Text, default="")
+    price_monthly = Column(MoneyType, nullable=False)
+    currency = Column(String(8), nullable=False, default="MXN")   # par moneda-monto (16.1)
+    trial_kind = Column(String(20), nullable=False, default="none")
+    # none | sin_tarjeta_15 | con_tarjeta_30   (pantalla 47)
+    trial_conversion = Column(MoneyType, nullable=False, default="0.25")  # decimal 0–1, por cohorte
+    adoption_rate = Column(MoneyType, nullable=False, default="0.30")     # sobre clientes B2B activos
+    start_month = Column(Integer, nullable=False, default=13)             # activable desde mes configurado (3.4)
+    ramp_months = Column(Integer, nullable=False, default=6)
+    churn_rate = Column(MoneyType, nullable=False, default="0.02")        # mensual sobre activos del plan
+    upgrade_to_plan_id = Column(String(32), nullable=True)                # upgrades/downgrades (3.4)
+    upgrade_rate = Column(MoneyType, nullable=False, default="0")         # mensual sobre activos del plan
+    included_token_credits = Column(MoneyType, nullable=False, default="0")  # unidades/mes (pantalla 46)
+    branch_limit = Column(Integer, nullable=True)   # "sucursales, límites" (3.4) — informativo v1
+    status = Column(String(20), nullable=False, default="active")  # draft|active|archived
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class Subscription(Base):
+    """Suscripción declarada por cliente — entidad de la sección 7:
+    Subscription(client_id, plan_id, start_date, trial_end, status, MRR).
+    Registro operativo (pantallas 45/47); NO alimenta al motor en fase 6
+    (patrón TransactionRecord de fase 5; conciliación con 'Real observado' en
+    fase 7). Append-only: cancelar fija canceled_at, jamás DELETE."""
+    __tablename__ = "subscriptions"
+    id = Column(String(32), primary_key=True, default=new_id)
+    project_id = Column(String(32), ForeignKey("projects.id"), nullable=False)
+    client_id = Column(String(32), ForeignKey("clients.id"), nullable=False)
+    plan_id = Column(String(32), ForeignKey("subscription_plans.id"), nullable=False)
+    start_date = Column(String(10), nullable=False)     # "YYYY-MM-DD"
+    trial_end = Column(String(10), nullable=True)       # None ⇒ sin trial
+    status = Column(String(20), nullable=False, default="trial")  # trial|activa|pausada|cancelada
+    mrr = Column(MoneyType, nullable=False, default="0")  # congelado del plan al activar
+    source_type = Column(String(20), default="declarado")  # clasificación 7.1
+    created_at = Column(DateTime, default=utcnow)
+    canceled_at = Column(DateTime, nullable=True)
+    __table_args__ = (Index("ix_subscription_lookup", "project_id", "client_id"),)
+
+
+class TokenLedger(Base):
+    """Ledger de tokens — entidad de la sección 7:
+    TokenLedger(client_id, movement_type, units, cost, price, source).
+    Append-only, escrito por execute_run desde logs.token_ledger (mismo patrón
+    que SettlementBatch/ArInvoice). client_id NULL = agregado del proyecto
+    (el motor v1 modela por segmento, no por consumidor individual)."""
+    __tablename__ = "token_ledger"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(String(32), ForeignKey("simulation_runs.id"), nullable=False)
+    month_index = Column(Integer, nullable=False)
+    month_label = Column(String(7), nullable=False)
+    client_id = Column(String(32), nullable=True)
+    movement_type = Column(String(20), nullable=False)
+    # incluido|consumo|overage|recarga|credito_inicial|expiracion  (3.4/46)
+    units = Column(MoneyType, nullable=False)
+    unit_cost = Column(MoneyType, nullable=False, default="0")   # costo proveedor/unidad
+    unit_price = Column(MoneyType, nullable=False, default="0")  # precio cobrado/unidad
+    amount = Column(MoneyType, nullable=False, default="0")      # MXN del movimiento
+    source = Column(String(20), nullable=False, default="run")
+    __table_args__ = (Index("ix_tokenledger_lookup", "run_id", "month_index"),)
+
+
+class CostTier(Base):
+    """Tramos escalonados de un cost item (pantalla 48):
+    costo del item = amount (componente fijo) + Σ tramos MARGINALES sobre el driver.
+    Solo aplica a items con behavior tiered_* (valores nuevos del String existente:
+    la tabla cost_items NO se altera)."""
+    __tablename__ = "cost_tiers"
+    id = Column(String(32), primary_key=True, default=new_id)
+    cost_item_id = Column(String(32), ForeignKey("cost_items.id"), nullable=False)
+    tier_from = Column(MoneyType, nullable=False)   # unidades del driver, inclusivo
+    tier_to = Column(MoneyType, nullable=True)      # None = tramo abierto (último)
+    rate = Column(MoneyType, nullable=False)        # MXN/unidad (decimal 0–1 si driver = GMV)
+    __table_args__ = (Index("ix_costtier_lookup", "cost_item_id", "tier_from"),)
+
+
+class HiringRole(Base):
+    """Hiring plan (pantalla 49): roles, salarios, fecha efectiva, ramp-up y
+    capacidad. 'No eliminar histórico': jamás DELETE — status archived; los runs
+    pasados conservan el rol en su snapshot. La nómina es COMPLETA desde
+    start_month; solo la capacidad rampa ('headcount por fecha efectiva;
+    capacidad tras ramp')."""
+    __tablename__ = "hiring_roles"
+    id = Column(String(32), primary_key=True, default=new_id)
+    project_id = Column(String(32), ForeignKey("projects.id"), nullable=False)
+    name = Column(String(120), nullable=False)
+    department = Column(String(60), nullable=False, default="nomina")  # categoría OPEX (5.5) → cost.cat.*
+    headcount = Column(Integer, nullable=False, default=1)
+    monthly_salary = Column(MoneyType, nullable=False)   # costo empresa por FTE
+    start_month = Column(Integer, nullable=False, default=1)   # fecha efectiva (índice, como CostItem)
+    end_month = Column(Integer, nullable=True)
+    ramp_months = Column(Integer, nullable=False, default=1)   # ≤1 ⇒ capacidad plena inmediata
+    onboarding_capacity_per_fte = Column(MoneyType, nullable=False, default="0")  # clientes/mes tras ramp
+    status = Column(String(20), nullable=False, default="active")  # active|archived
+    notes = Column(Text, default="")
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
 class ExportJob(Base):
     __tablename__ = "export_jobs"
     id = Column(String(32), primary_key=True, default=new_id)

@@ -12,7 +12,9 @@ from app.engine.snapshot import ENGINE_VERSION, hash_of  # noqa: E402
 
 def make_snapshot(overrides: dict | None = None, cost_items: list | None = None,
                   horizon: int = 12, clients: list | None = None,
-                  campaigns: list | None = None) -> dict:
+                  campaigns: list | None = None,
+                  subscription_plans: list | None = None,
+                  hiring_roles: list | None = None) -> dict:
     """Snapshot mínimo y puro para golden tests (sin base de datos)."""
     assumptions = {k: v[0] for k, v in DEFAULTS.items()}
     if overrides:
@@ -28,6 +30,8 @@ def make_snapshot(overrides: dict | None = None, cost_items: list | None = None,
         "assumption_origins": {k: "test" for k in assumptions},
         "cost_items": cost_items or [],
         "campaigns": campaigns or [],
+        "subscription_plans": subscription_plans or [],
+        "hiring_roles": hiring_roles or [],
         "portfolio": {"active_clients": 0, "profile": None, "clients": clients or []},
     }
     snapshot["input_hash"] = hash_of({k: v for k, v in snapshot.items() if k != "input_hash"})

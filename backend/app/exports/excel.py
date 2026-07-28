@@ -31,6 +31,7 @@ PNL_ROWS = [
     ("OPEX (fijos + adquisición)", "pnl.opex"),
     ("Costos de campañas", "cost.campaigns"),
     ("Fees de procesamiento", "cost.processing_fees"),
+    ("Nómina (hiring plan)", "cost.hiring"),
     ("EBITDA", "pnl.ebitda"),
 ]
 
@@ -52,6 +53,7 @@ CASH_ROWS = [
 PLAN_ROWS = [
     ("Clientes B2B al cierre", "b2b.clients_end", COUNT_FMT),
     ("Altas activadas", "b2b.adds_activated", COUNT_FMT),
+    ("Capacidad de onboarding", "b2b.onboarding_capacity", COUNT_FMT),
     ("Churn B2B", "b2b.churned", COUNT_FMT),
     ("Consumidores activos", "b2c.consumers_end", COUNT_FMT),
     ("Compradores", "b2c.buyers", COUNT_FMT),
@@ -59,9 +61,16 @@ PLAN_ROWS = [
     ("GMV", "tx.gmv", MONEY_FMT),
     ("Utilidad elegible", "tx.eligible_utility", MONEY_FMT),
     ("Comisión Pigui", "rev.commission", MONEY_FMT),
+    ("Suscriptores activos", "subs.active_total", COUNT_FMT),
+    ("Trials iniciados", "subs.trial_starts", COUNT_FMT),
+    ("MRR al cierre", "rev.mrr.end", MONEY_FMT),
+    ("Tokens consumidos", "tokens.units.consumed", COUNT_FMT),
+    ("Tokens overage", "tokens.units.overage", COUNT_FMT),
     ("Puntos emitidos (valor)", "points.emitted", MONEY_FMT),
     ("Utilidad neta del negocio", "tx.business_net", MONEY_FMT),
     ("Saldo de puntos (pasivo)", "points.balance_end", MONEY_FMT),
+    ("Headcount", "hiring.headcount", COUNT_FMT),
+    ("Nómina (hiring plan)", "cost.hiring", MONEY_FMT),
     ("Ingresos Pigui", "pnl.revenue", MONEY_FMT),
     ("EBITDA", "pnl.ebitda", MONEY_FMT),
     ("Caja", "cash.balance_end", MONEY_FMT),
@@ -112,6 +121,74 @@ UE_ROWS = [
     ("Burn neto", "kpi.burn_net", MONEY_FMT),
     ("Runway (meses)", "kpi.runway_months", "0.0"),
 ]
+
+# --- Fase 6: suscripciones detalladas, tokens/IA y hiring plan ---
+# Las métricas existen siempre en runs 1.3.0 (cero con los motores apagados);
+# en runs previos faltan y las celdas quedan vacías sin romper el export.
+
+SUBSCRIPTION_ROWS = [
+    ("MRR inicial", "rev.mrr.start", MONEY_FMT),
+    ("MRR nuevo", "rev.mrr.new", MONEY_FMT),
+    ("MRR expansión", "rev.mrr.expansion", MONEY_FMT),
+    ("MRR contracción", "rev.mrr.contraction", MONEY_FMT),
+    ("MRR perdido (churn)", "rev.mrr.churned", MONEY_FMT),
+    ("MRR al cierre", "rev.mrr.end", MONEY_FMT),
+    ("Trials iniciados", "subs.trial_starts", COUNT_FMT),
+    ("Conversiones de trial", "subs.conversions", COUNT_FMT),
+    ("Suscriptores activos", "subs.active_total", COUNT_FMT),
+]
+
+TOKEN_ROWS = [
+    ("Tokens consumidos", "tokens.units.consumed", COUNT_FMT),
+    ("Tokens incluidos", "tokens.units.included", COUNT_FMT),
+    ("Tokens incluidos expirados", "tokens.units.included_expired", COUNT_FMT),
+    ("Crédito inicial usado", "tokens.units.credit_used", COUNT_FMT),
+    ("Crédito inicial expirado", "tokens.units.credit_expired", COUNT_FMT),
+    ("Tokens overage", "tokens.units.overage", COUNT_FMT),
+    ("Tokens de recarga", "tokens.units.recharge", COUNT_FMT),
+    ("Ingresos por IA/tokens", "rev.tokens", MONEY_FMT),
+    ("Ingresos por overage", "rev.tokens.overage", MONEY_FMT),
+    ("Ingresos por recargas", "rev.tokens.recharges", MONEY_FMT),
+    ("Costo de tokens (proveedor)", "cost.tokens", MONEY_FMT),
+    ("Margen unitario", "tokens.unit_margin", MONEY_FMT),
+    ("Margen % de tokens", "tokens.margin_pct", "0.00%"),
+]
+
+HIRING_ROWS = [
+    ("Headcount", "hiring.headcount", COUNT_FMT),
+    ("Nómina (hiring plan)", "cost.hiring", MONEY_FMT),
+    ("Capacidad de onboarding", "b2b.onboarding_capacity", COUNT_FMT),
+    ("Altas activadas", "b2b.adds_activated", COUNT_FMT),
+]
+
+TRIAL_KIND_LABELS = {
+    "none": "Sin trial",
+    "sin_tarjeta_15": "Sin tarjeta (15 días)",
+    "con_tarjeta_30": "Con tarjeta (30 días)",
+}
+
+
+def _num(value):
+    """Convierte valores string del snapshot/logs a número para la celda.
+    None o vacío ⇒ celda vacía; si no es numérico, se vuelca tal cual."""
+    if value in (None, ""):
+        return None
+    try:
+        return float(D(value))
+    except Exception:
+        return value
+
+
+def _month_of(value, months):
+    """Índice de mes (1-based) → etiqueta 'YYYY-MM'; fuera de rango o no
+    numérico se vuelca tal cual (defensivo con logs de runs viejos)."""
+    try:
+        idx = int(value)
+    except (TypeError, ValueError):
+        return value
+    if 1 <= idx <= len(months):
+        return months[idx - 1]
+    return idx
 
 
 def _style_header(ws, row, cols):
@@ -359,6 +436,129 @@ def generate_workbook(db: Session, run: SimulationRun) -> str:
                 ws.cell(row=ws.max_row, column=col).number_format = MONEY_FMT
     else:
         ws.append(["Sin facturas de AR para este run"])
+
+    logs = run.logs or {}
+
+    # --- Subscriptions (fase 6; pantallas 45/47/62) ---
+    ws = wb.create_sheet("Subscriptions")
+    _sheet_run_header(ws, run, "Suscripciones, trials y MRR bridge")
+    ws.append(["Planes de suscripción congelados en el snapshot"])
+    ws[f"A{ws.max_row}"].font = Font(bold=True)
+    plans = snapshot.get("subscription_plans", []) or []
+    if plans:
+        plan_names = {p.get("id"): p.get("name", "") for p in plans}
+        ws.append(["Plan", "Precio mensual", "Moneda", "Trial", "Conversión de trial",
+                   "Adopción", "Mes de inicio", "Ramp (meses)", "Churn mensual",
+                   "Upgrade a plan", "Créditos de tokens incluidos"])
+        _style_header(ws, ws.max_row, 11)
+        for p in plans:
+            upgrade_id = p.get("upgrade_to_plan_id")
+            trial_kind = p.get("trial_kind", "")
+            ws.append([
+                p.get("name", ""),
+                _num(p.get("price_monthly")),
+                p.get("currency", ""),
+                TRIAL_KIND_LABELS.get(trial_kind, trial_kind),
+                _num(p.get("trial_conversion")),
+                _num(p.get("adoption_rate")),
+                p.get("start_month"),
+                p.get("ramp_months"),
+                _num(p.get("churn_rate")),
+                plan_names.get(upgrade_id, upgrade_id or ""),
+                _num(p.get("included_token_credits")),
+            ])
+            row = ws.max_row
+            ws.cell(row=row, column=2).number_format = MONEY_FMT
+            for col in (5, 6, 9):
+                ws.cell(row=row, column=col).number_format = "0.00%"
+            ws.cell(row=row, column=11).number_format = COUNT_FMT
+    else:
+        ws.append(["Sin planes de suscripción congelados en este run"])
+    ws.append([])
+    _append_metric_matrix(ws, months, metrics, SUBSCRIPTION_ROWS)
+    ws.append([])
+    ws.append(["Cohortes de trial del run (conversión por tipo)"])
+    ws[f"A{ws.max_row}"].font = Font(bold=True)
+    cohorts = logs.get("subs_cohorts", []) or []
+    if cohorts:
+        ws.append(["Plan", "Tipo de trial", "Mes de cohorte", "Inicios",
+                   "Mes de decisión", "Conversiones", "Tasa de conversión"])
+        _style_header(ws, ws.max_row, 7)
+        for c in cohorts:
+            trial_kind = c.get("trial_kind", "")
+            ws.append([
+                c.get("plan_name", "") or c.get("plan_id", ""),
+                TRIAL_KIND_LABELS.get(trial_kind, trial_kind),
+                _month_of(c.get("cohort_month"), months),
+                _num(c.get("starts")),
+                _month_of(c.get("decision_month"), months),
+                _num(c.get("conversions")),
+                _num(c.get("conversion_rate")),
+            ])
+            row = ws.max_row
+            for col in (4, 6):
+                ws.cell(row=row, column=col).number_format = COUNT_FMT
+            ws.cell(row=row, column=7).number_format = "0.00%"
+    else:
+        ws.append(["Sin cohortes de trial en este run"])
+
+    # --- Tokens (fase 6; pantallas 46/63) ---
+    ws = wb.create_sheet("Tokens")
+    _sheet_run_header(ws, run, "IA y tokens — unidades, dinero y margen")
+    _append_metric_matrix(ws, months, metrics, TOKEN_ROWS)
+    ws.append([])
+    ws.append(["Ledger de tokens del run"])
+    ws[f"A{ws.max_row}"].font = Font(bold=True)
+    ledger = logs.get("token_ledger", []) or []
+    if ledger:
+        ws.append(["Mes", "Movimiento", "Unidades", "Costo unitario",
+                   "Precio unitario", "Monto"])
+        _style_header(ws, ws.max_row, 6)
+        for mv in ledger:
+            ws.append([
+                _month_of(mv.get("month"), months),
+                mv.get("movement_type", ""),
+                _num(mv.get("units")),
+                _num(mv.get("unit_cost")),
+                _num(mv.get("unit_price")),
+                _num(mv.get("amount")),
+            ])
+            row = ws.max_row
+            ws.cell(row=row, column=3).number_format = COUNT_FMT
+            for col in (4, 5, 6):
+                ws.cell(row=row, column=col).number_format = MONEY_FMT
+    else:
+        ws.append(["Sin movimientos de tokens en este run"])
+
+    # --- Hiring (fase 6; pantalla 49) ---
+    ws = wb.create_sheet("Hiring")
+    _sheet_run_header(ws, run, "Equipo, nómina y capacidad de onboarding")
+    ws.append(["Roles de hiring congelados en el snapshot"])
+    ws[f"A{ws.max_row}"].font = Font(bold=True)
+    roles = snapshot.get("hiring_roles", []) or []
+    if roles:
+        ws.append(["Rol", "Departamento", "Headcount", "Salario mensual",
+                   "Mes de inicio", "Mes de fin", "Ramp (meses)",
+                   "Capacidad de onboarding por FTE"])
+        _style_header(ws, ws.max_row, 8)
+        for r in roles:
+            ws.append([
+                r.get("name", ""),
+                r.get("department", ""),
+                r.get("headcount"),
+                _num(r.get("monthly_salary")),
+                r.get("start_month"),
+                r.get("end_month"),
+                r.get("ramp_months"),
+                _num(r.get("onboarding_capacity_per_fte")),
+            ])
+            row = ws.max_row
+            ws.cell(row=row, column=4).number_format = MONEY_FMT
+            ws.cell(row=row, column=8).number_format = COUNT_FMT
+    else:
+        ws.append(["Sin roles de hiring congelados en este run"])
+    ws.append([])
+    _append_metric_matrix(ws, months, metrics, HIRING_ROWS)
 
     file_name = f"pigui_business_plan_{scenario_info['type']}_{run.id[:8]}.xlsx"
     path = os.path.join(EXPORT_DIR, file_name)

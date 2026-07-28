@@ -26,6 +26,8 @@ def serialize_run(run: SimulationRun, with_summary: bool = True) -> dict:
         data["summary"] = run.logs.get("summary")
         data["bottlenecks"] = run.logs.get("bottlenecks")
         data["cohorts"] = run.logs.get("cohorts") or []
+        data["subs_cohorts"] = run.logs.get("subs_cohorts") or []
+        data["token_ledger"] = run.logs.get("token_ledger") or []
     return data
 
 

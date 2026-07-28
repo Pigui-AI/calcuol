@@ -10,7 +10,7 @@ from decimal import Decimal
 from app.engine.money import D
 from app.engine import assumptions as A
 
-ENGINE_VERSION = "1.2.0"
+ENGINE_VERSION = "1.3.0"
 
 
 def canonical_json(data) -> str:
@@ -53,12 +53,16 @@ def _weighted_portfolio_profile(clients: list) -> dict | None:
 
 def build_snapshot(project: dict, scenario: dict, effective_assumptions: dict,
                    cost_items: list, clients: list, campaigns: list | None = None,
-                   reward_eligible_share: str | None = None) -> dict:
+                   reward_eligible_share: str | None = None,
+                   subscription_plans: list | None = None,
+                   hiring_roles: list | None = None) -> dict:
     """Construye el snapshot puro (serializable) que consume el simulador.
 
     `campaigns`: campañas activas con efectos ya resueltos, ordenadas por id (fase 5).
     `reward_eligible_share`: share del catálogo elegible para puntos, derivado
     del portafolio (fase 5, pantalla 34); None si no hay catálogo.
+    `subscription_plans` / `hiring_roles`: config activa congelada (fase 6,
+    pantallas 45–49), ordenada por id.
     """
     portfolio_profile = _weighted_portfolio_profile(clients)
     snapshot = {
@@ -80,6 +84,8 @@ def build_snapshot(project: dict, scenario: dict, effective_assumptions: dict,
             } for ci in sorted(cost_items, key=lambda x: (x["category"], x["name"]))
         ],
         "campaigns": sorted(campaigns or [], key=lambda c: c["id"]),
+        "subscription_plans": sorted(subscription_plans or [], key=lambda p: p["id"]),
+        "hiring_roles": sorted(hiring_roles or [], key=lambda r: r["id"]),
         "portfolio": {
             "active_clients": len([c for c in clients if c.get("status") in ("active", "onboarding")]),
             "profile": portfolio_profile,

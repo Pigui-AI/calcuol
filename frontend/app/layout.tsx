@@ -31,7 +31,10 @@ const MENU: { group: string; items: { label: string; href?: string; phase?: stri
     items: [
       { label: "Campañas y recompensas", href: "/campaigns/" },
       { label: "Transacciones y pagos", href: "/transactions/" },
-      { label: "Costos e infraestructura", href: undefined },
+      { label: "Suscripciones y planes", href: "/subscriptions/" },
+      { label: "IA y tokens", href: "/tokens/" },
+      { label: "Costos e infraestructura", href: "/costs/" },
+      { label: "Equipo e hiring", href: "/hiring/" },
     ],
   },
   {
@@ -87,7 +90,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 ))}
               </nav>
               <p className="mt-8 text-[11px] leading-relaxed text-slate-400">
-                Fases 0–5 · motor v1.2.0<br />Especificación v1.0 (jul 2026)
+                Fases 0–6 · motor v1.3.0<br />Especificación v1.0 (jul 2026)
               </p>
             </div>
           </aside>

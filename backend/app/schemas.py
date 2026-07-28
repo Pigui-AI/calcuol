@@ -1,6 +1,6 @@
 """Esquemas Pydantic de la API."""
 from typing import Optional
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, ConfigDict, Field, EmailStr
 
 
 class ProjectGeneral(BaseModel):
@@ -152,3 +152,85 @@ class TransactionIn(BaseModel):
     points_redeemed: str = "0"
     reference: str = ""
     source_type: str = "declarado"
+
+
+class SubscriptionPlanCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    description: str = ""
+    price_monthly: str
+    currency: str = "MXN"
+    trial_kind: str = "none"  # none|sin_tarjeta_15|con_tarjeta_30 (pantalla 47)
+    trial_conversion: str = "0.25"
+    adoption_rate: str = "0.30"
+    start_month: int = 13
+    ramp_months: int = 6
+    churn_rate: str = "0.02"
+    upgrade_to_plan_id: Optional[str] = None
+    upgrade_rate: str = "0"
+    included_token_credits: str = "0"
+    branch_limit: Optional[int] = None
+    actor: str = "usuario"
+
+
+class SubscriptionPlanPatch(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    price_monthly: Optional[str] = None
+    currency: Optional[str] = None
+    trial_kind: Optional[str] = None
+    trial_conversion: Optional[str] = None
+    adoption_rate: Optional[str] = None
+    start_month: Optional[int] = None
+    ramp_months: Optional[int] = None
+    churn_rate: Optional[str] = None
+    upgrade_to_plan_id: Optional[str] = None
+    upgrade_rate: Optional[str] = None
+    included_token_credits: Optional[str] = None
+    branch_limit: Optional[int] = None
+
+
+class SubscriptionDeclareIn(BaseModel):
+    plan_id: str
+    start_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    trial_end: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    source_type: str = "declarado"
+    actor: str = "usuario"
+
+
+class SubscriptionPatch(BaseModel):
+    status: str  # trial|activa|pausada|cancelada
+    actor: str = "usuario"
+
+
+class CostTierIn(BaseModel):
+    """Tramo escalonado (pantalla 48): mismas claves que el snapshot ({from, to, rate})."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    tier_from: str = Field(alias="from")
+    tier_to: Optional[str] = Field(default=None, alias="to")
+    rate: str
+
+
+class HiringRoleCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    department: str = "nomina"
+    headcount: int = 1
+    monthly_salary: str
+    start_month: int = 1
+    end_month: Optional[int] = None
+    ramp_months: int = 1
+    onboarding_capacity_per_fte: str = "0"
+    notes: str = ""
+    actor: str = "usuario"
+
+
+class HiringRolePatch(BaseModel):
+    name: Optional[str] = None
+    department: Optional[str] = None
+    headcount: Optional[int] = None
+    monthly_salary: Optional[str] = None
+    start_month: Optional[int] = None
+    end_month: Optional[int] = None
+    ramp_months: Optional[int] = None
+    onboarding_capacity_per_fte: Optional[str] = None
+    notes: Optional[str] = None

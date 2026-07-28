@@ -9,7 +9,7 @@ from app.database import SessionLocal
 from app.models import (
     Project, Scenario, AssumptionSet, Client, CostItem,
     SimulationRun, MonthlyProjection, Campaign, SettlementBatch, ArInvoice,
-    Brand, Branch, ProductService,
+    Brand, Branch, ProductService, SubscriptionPlan, HiringRole, CostTier, TokenLedger,
 )
 from app.engine import assumptions as A
 from app.engine.money import D
@@ -202,10 +202,22 @@ def _reward_eligible_share(db: Session, project_id: str) -> str | None:
 def snapshot_for_scenario(db: Session, scenario: Scenario) -> dict:
     project: Project = db.get(Project, scenario.project_id)
     eff = effective_assumptions(db, project.id, scenario.id)
-    cost_items = [{
-        "name": ci.name, "category": ci.category, "behavior": ci.behavior,
-        "amount": str(ci.amount), "effective_from": ci.effective_from, "effective_to": ci.effective_to,
-    } for ci in db.execute(select(CostItem).where(CostItem.project_id == project.id)).scalars()]
+    cost_items = []
+    for ci in db.execute(select(CostItem).where(CostItem.project_id == project.id)).scalars():
+        entry = {
+            "name": ci.name, "category": ci.category, "behavior": ci.behavior,
+            "amount": str(ci.amount), "effective_from": ci.effective_from,
+            "effective_to": ci.effective_to,
+        }
+        # tramos escalonados (fase 6, pantalla 48) solo si el item los tiene:
+        # items sin tiers serializan idéntico y los snapshots previos siguen estables
+        tiers = db.execute(select(CostTier).where(CostTier.cost_item_id == ci.id)
+                           .order_by(CostTier.tier_from)).scalars().all()
+        if tiers:
+            entry["tiers"] = [{"from": str(t.tier_from),
+                               "to": None if t.tier_to is None else str(t.tier_to),
+                               "rate": str(t.rate)} for t in tiers]
+        cost_items.append(entry)
     clients = []
     for c in db.execute(select(Client).where(Client.project_id == project.id,
                                              Client.status != "archived")).scalars():
@@ -232,6 +244,26 @@ def snapshot_for_scenario(db: Session, scenario: Scenario) -> dict:
                     campaign_effects(db, project.id, scenario.id, c.id).items()},
     } for c in db.execute(select(Campaign).where(Campaign.project_id == project.id,
                                                  Campaign.status == "active")).scalars()]
+    plans = [{
+        "id": p.id, "name": p.name, "price_monthly": str(p.price_monthly),
+        "currency": p.currency, "trial_kind": p.trial_kind,
+        "trial_conversion": str(p.trial_conversion), "adoption_rate": str(p.adoption_rate),
+        "start_month": p.start_month, "ramp_months": p.ramp_months,
+        "churn_rate": str(p.churn_rate), "upgrade_to_plan_id": p.upgrade_to_plan_id,
+        "upgrade_rate": str(p.upgrade_rate),
+        "included_token_credits": str(p.included_token_credits),
+    } for p in db.execute(select(SubscriptionPlan).where(
+        SubscriptionPlan.project_id == project.id,
+        SubscriptionPlan.status == "active")).scalars()]
+    roles = [{
+        "id": r.id, "name": r.name, "department": r.department,
+        "headcount": r.headcount, "monthly_salary": str(r.monthly_salary),
+        "start_month": r.start_month, "end_month": r.end_month,
+        "ramp_months": r.ramp_months,
+        "onboarding_capacity_per_fte": str(r.onboarding_capacity_per_fte),
+    } for r in db.execute(select(HiringRole).where(
+        HiringRole.project_id == project.id,
+        HiringRole.status == "active")).scalars()]
     return build_snapshot(
         {"id": project.id, "name": project.name, "base_currency": project.base_currency,
          "start_month": project.start_month, "horizon_months": project.horizon_months},
@@ -239,6 +271,8 @@ def snapshot_for_scenario(db: Session, scenario: Scenario) -> dict:
         eff, cost_items, clients,
         campaigns=campaigns,
         reward_eligible_share=_reward_eligible_share(db, project.id),
+        subscription_plans=plans,
+        hiring_roles=roles,
     )
 
 
@@ -260,7 +294,7 @@ def execute_run(run_id: str):
         for key, series in result["metrics"].items():
             unit = "MXN" if key.startswith(("tx.gmv", "tx.direct", "tx.eligible", "tx.business",
                                             "rev.", "cash.", "ar.", "cost.", "pnl.", "stl.",
-                                            "camp.gmv", "camp.revenue",
+                                            "camp.gmv", "camp.revenue", "tokens.unit_margin",
                                             "ue.arpa", "ue.cm", "ue.cac", "ue.ltv", "kpi.burn")) else ""
             for i, value in enumerate(series):
                 if value is None:
@@ -295,12 +329,23 @@ def execute_run(run_id: str):
                 status="cobrada" if due <= horizon else "por_cobrar",
             ))
 
+        # fase 6: persistir el ledger de tokens derivado del run (append-only)
+        for mv in result["logs"].get("token_ledger", []):
+            db.add(TokenLedger(
+                run_id=run.id, month_index=mv["month"], month_label=months[mv["month"] - 1],
+                client_id=None, movement_type=mv["movement_type"], units=mv["units"],
+                unit_cost=mv.get("unit_cost", "0"), unit_price=mv.get("unit_price", "0"),
+                amount=mv.get("amount", "0"), source="run",
+            ))
+
         run.status = "succeeded"
         run.output_hash = result["output_hash"]
         run.logs = {"bottlenecks": result["logs"]["bottlenecks"],
                     "cohorts": result["logs"].get("cohorts", []),
                     "settlements": result["logs"].get("settlements", []),
                     "ar_invoices": result["logs"].get("ar_invoices", []),
+                    "subs_cohorts": result["logs"].get("subs_cohorts", []),
+                    "token_ledger": result["logs"].get("token_ledger", []),
                     "summary": result["summary"]}
         run.finished_at = datetime.now(timezone.utc)
         db.commit()
