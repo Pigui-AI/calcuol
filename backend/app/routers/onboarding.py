@@ -84,12 +84,18 @@ def _first_client(db: Session, pid: str) -> Client | None:
 
 
 def _latest_override(db: Session, pid: str, key: str) -> list[AssumptionSet]:
-    """Historial (viejo → vigente) de un supuesto a nivel proyecto/escenario."""
+    """Historial (viejo → vigente) de un supuesto a nivel proyecto/escenario.
+
+    El orden respeta la jerarquía de resolución (proyecto → escenario): el
+    último elemento es el valor vigente aunque el override global sea más
+    reciente que el del escenario.
+    """
     return db.execute(
         select(AssumptionSet)
         .where(AssumptionSet.project_id == pid, AssumptionSet.key == key,
                AssumptionSet.scope_type.in_(("global", "scenario")))
-        .order_by(AssumptionSet.created_at, AssumptionSet.version)
+        .order_by(AssumptionSet.scope_type == "scenario",
+                  AssumptionSet.created_at, AssumptionSet.version)
     ).scalars().all()
 
 
