@@ -8,6 +8,7 @@ import { api, OnboardingRoadmap, OnboardingStep } from "@/lib/api";
 import { Button } from "@/components/ui";
 import TutorialScene from "@/components/TutorialScenes";
 import StepQuiz, { QuizScore } from "@/components/StepQuiz";
+import DialogueLesson from "@/components/DialogueLesson";
 
 const ICONS: Record<string, React.ReactNode> = {
   folder: <path d="M3 7a2 2 0 0 1 2-2h3.6l1.7 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />,
@@ -86,6 +87,10 @@ function StepDetail({ step, personalized, quizScore, onQuizFinish, onReview, han
         </p>
         <p className="mt-0.5 text-xs leading-relaxed text-slate-700">{step.eli5}</p>
       </div>
+
+      {(step.dialogue?.length ?? 0) > 0 && (
+        <DialogueLesson stepKey={step.key} turns={step.dialogue!} />
+      )}
 
       {step.hands_on.length > 0 && (
         <div className="mt-2 rounded-md bg-slate-50 px-3 py-2">

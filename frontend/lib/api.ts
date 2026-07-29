@@ -277,6 +277,8 @@ export interface QuizQuestion {
   /** true cuando la pregunta usa números reales del proyecto (calculados server-side) */
   uses_real_data: boolean;
 }
+/** Turno del diálogo mentor-alumno (guion autorado en el backend). */
+export interface DialogueTurn { speaker: "alumno" | "mentor"; text: string; }
 export interface OnboardingStep {
   key: string; order: number; title: string; short: string; icon: string;
   status: "completado" | "en_progreso" | "pendiente";
@@ -285,6 +287,7 @@ export interface OnboardingStep {
   /** opcionales: el backend puede ser más viejo que el frontend */
   scene_data?: TutorialSceneData | null;
   quiz?: QuizQuestion[];
+  dialogue?: DialogueTurn[];
 }
 export interface OnboardingRoadmap {
   project: { id: string; name: string } | null;

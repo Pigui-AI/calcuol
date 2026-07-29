@@ -61,6 +61,14 @@ STEPS = [
                 ],
             },
         ],
+        "dialogue": [
+            {"speaker": "alumno", "text": "¿Y si me equivoco al crear el proyecto? ¿Quedo atrapado?"},
+            {"speaker": "mentor", "text": "Casi todo se edita después: nombre, descripción, estado. Lo que se fija al crearlo es el horizonte y la moneda base."},
+            {"speaker": "alumno", "text": "¿Entonces qué horizonte elijo?"},
+            {"speaker": "mentor", "text": "60 meses. Siempre puedes mirar solo el primer año; pero si simulas a 12 y luego quieres 60, tocará crear un proyecto nuevo."},
+            {"speaker": "alumno", "text": "¿Y el asistente qué me va pidiendo?"},
+            {"speaker": "mentor", "text": "Tres cosas: la base inicial, cómo crece el negocio y el modelo de ingresos. Con eso el motor ya puede correr."},
+        ],
     },
     {
         "key": "clientes", "title": "Cargar clientes B2B",
@@ -112,6 +120,14 @@ STEPS = [
                 ],
             },
         ],
+        "dialogue": [
+            {"speaker": "alumno", "text": "Ya tengo el proyecto. ¿Ahora invento los números de mis clientes?"},
+            {"speaker": "mentor", "text": "No: capturas clientes reales. Cada uno con sus sucursales, su catálogo y su línea base — los números de un mes normal."},
+            {"speaker": "alumno", "text": "¿La línea base no es lo mismo que los supuestos?"},
+            {"speaker": "mentor", "text": "No. Los supuestos son perillas del modelo; la línea base son datos del negocio: ventas, tickets, consumidores. De ahí el motor deriva ticket y margen reales."},
+            {"speaker": "alumno", "text": "¿Y si todavía no tengo esos datos a la mano?"},
+            {"speaker": "mentor", "text": "El motor corre con sus defaults, pero cada dato real que cargues mejora la simulación. Es lo que más calidad aporta."},
+        ],
     },
     {
         "key": "supuestos", "title": "Ajustar los supuestos",
@@ -159,6 +175,14 @@ STEPS = [
                      "feedback": "No: el borde morado significa «cambio sin guardar». El origen se lee en su propia columna."},
                 ],
             },
+        ],
+        "dialogue": [
+            {"speaker": "alumno", "text": "Cambié el churn y me da miedo guardar…"},
+            {"speaker": "mentor", "text": "Guarda tranquilo: nada se sobrescribe. Cada edición crea una versión con autor y fecha, y la anterior queda guardada."},
+            {"speaker": "alumno", "text": "¿Y cómo sé qué valor está usando el motor ahora mismo?"},
+            {"speaker": "mentor", "text": "En el centro de supuestos: cada variable muestra su valor efectivo y su origen — default, proyecto o escenario. El escenario gana."},
+            {"speaker": "alumno", "text": "Me apareció un borde morado en un campo."},
+            {"speaker": "mentor", "text": "Cambio sin guardar. Pulsa «Guardar cambios» y el origen dirá «escenario», con una versión nueva en el historial."},
         ],
     },
     {
@@ -210,6 +234,14 @@ STEPS = [
                 ],
             },
         ],
+        "dialogue": [
+            {"speaker": "alumno", "text": "Puse una curva agresiva y el motor me da menos altas de las que pedí."},
+            {"speaker": "mentor", "text": "Mira la columna «restricción activa»: te dice mes a mes quién frenó — la curva, el presupuesto o la capacidad de onboarding."},
+            {"speaker": "alumno", "text": "¿O sea que no basta con querer crecer?"},
+            {"speaker": "mentor", "text": "Exacto: querer no es poder. Si tu equipo solo integra 8 clientes al mes, el motor te da 8 y te dice por qué."},
+            {"speaker": "alumno", "text": "¿Y la pantalla de cohortes para qué la uso?"},
+            {"speaker": "mentor", "text": "Para la retención por antigüedad: los consumidores nuevos se van más que los maduros. Es más real que un churn plano."},
+        ],
     },
     {
         "key": "operaciones", "title": "Configurar operaciones",
@@ -258,6 +290,14 @@ STEPS = [
                 ],
             },
         ],
+        "dialogue": [
+            {"speaker": "alumno", "text": "Creé una campaña pero los resultados no cambian nada."},
+            {"speaker": "mentor", "text": "¿Encendiste el interruptor maestro del motor de campañas? Todos los motores extra nacen apagados."},
+            {"speaker": "alumno", "text": "¿Apagados? ¿Y eso por qué?"},
+            {"speaker": "mentor", "text": "Para que configures con calma. Enciendes uno, simulas y miras qué cambió. Si no te convence, lo apagas y nada se rompe."},
+            {"speaker": "alumno", "text": "¿Los enciendo todos de una vez para ver el escenario completo?"},
+            {"speaker": "mentor", "text": "Mejor de uno en uno: así sabes exactamente qué motor causó qué cambio en los números."},
+        ],
     },
     {
         "key": "simulacion", "title": "Ejecutar la simulación",
@@ -305,6 +345,14 @@ STEPS = [
                      "feedback": "Exacto: y como la foto no cambia, el run siempre se puede reproducir."},
                 ],
             },
+        ],
+        "dialogue": [
+            {"speaker": "alumno", "text": "¿Simular borra o cambia algo de lo que ya capturé?"},
+            {"speaker": "mentor", "text": "Nada. Primero congela una foto de todos tus inputs — el snapshot — y luego calcula mes a mes sobre esa foto."},
+            {"speaker": "alumno", "text": "¿Y si corro dos veces seguidas?"},
+            {"speaker": "mentor", "text": "Mismos números, exactos. Misma foto y misma versión del motor producen siempre el mismo resultado."},
+            {"speaker": "alumno", "text": "¿Para qué sirve el hash que aparece en el run?"},
+            {"speaker": "mentor", "text": "Es la huella de esa foto: con él cualquiera puede comprobar de qué inputs salió cada número."},
         ],
     },
     {
@@ -357,6 +405,14 @@ STEPS = [
                 ],
             },
         ],
+        "dialogue": [
+            {"speaker": "alumno", "text": "Tengo mil dudas a la vez: ¿subo precios, bajo el CAC, ataco el churn…?"},
+            {"speaker": "mentor", "text": "Corre un análisis de sensibilidad: mueve una perilla a la vez y el tornado ordena cuál mueve más tu métrica objetivo."},
+            {"speaker": "alumno", "text": "¿La barra más larga es mi prioridad?"},
+            {"speaker": "mentor", "text": "Sí. Y con el comparador pones dos escenarios lado a lado y ves los deltas número por número."},
+            {"speaker": "alumno", "text": "¿Y la pantalla de conclusiones qué hace?"},
+            {"speaker": "mentor", "text": "El motor propone hallazgos, riesgos y acciones citando la métrica que los sustenta; tú aceptas, editas o descartas."},
+        ],
     },
     {
         "key": "entregable", "title": "Exportar el plan",
@@ -404,6 +460,14 @@ STEPS = [
                      "feedback": "No hace falta rehacer nada: el snapshot del run citado conserva todos los inputs que lo produjeron."},
                 ],
             },
+        ],
+        "dialogue": [
+            {"speaker": "alumno", "text": "Necesito mandarle el plan al inversionista. ¿Copio los números a mano?"},
+            {"speaker": "mentor", "text": "No: desde los resultados exportas el Excel de once hojas o el documento ejecutivo. Los dos citan el run que los originó."},
+            {"speaker": "alumno", "text": "¿Y esa cita para qué es?"},
+            {"speaker": "mentor", "text": "Para que cuando pregunten «¿de dónde salió este número?» siempre haya respuesta: del run citado, reproducible con su snapshot."},
+            {"speaker": "alumno", "text": "¿Lo puedo imprimir para la reunión?"},
+            {"speaker": "mentor", "text": "El documento se abre en el navegador y lo imprimes a PDF; el run va citado en la portada."},
         ],
     },
 ]

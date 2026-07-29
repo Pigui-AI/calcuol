@@ -115,6 +115,22 @@ def test_quiz_empty_db_is_authored(client):
         assert all(q["uses_real_data"] is False for q in s["quiz"])
 
 
+def test_dialogue_authored_shape(client):
+    from app.content.tutorial_es import STEPS
+
+    for step in STEPS:
+        dialogue = step.get("dialogue")
+        assert dialogue and len(dialogue) >= 4, f"paso {step['key']}: diálogo corto o ausente"
+        assert dialogue[0]["speaker"] == "alumno"       # el alumno abre con la duda
+        for turn in dialogue:
+            assert turn["speaker"] in ("alumno", "mentor")
+            assert turn["text"].strip()
+
+    # y viaja en la respuesta del API
+    steps = client.get("/onboarding").json()["steps"]
+    assert all(len(s.get("dialogue") or []) >= 4 for s in steps)
+
+
 def _seed_project(db):
     from app.models import (Project, Scenario, Client, Brand, Branch, ProductService,
                             ClientBaseline, AssumptionSet, SimulationRun,
