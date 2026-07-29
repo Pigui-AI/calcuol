@@ -7,6 +7,7 @@ paso apunta a la pantalla donde se completa y explica qué se aprende ahí.
 El contenido autorado (what/tip/eli5/hands_on) vive en
 app/content/tutorial_es.py; aquí solo se calcula el estado y los enlaces.
 """
+import hashlib
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -56,6 +57,32 @@ def _fmt_int(value) -> str:
     return f"{int(D(value)):,}"
 
 
+def _fmt_cents(value) -> str:
+    """Monto con centavos para respuestas de quiz: $38.33."""
+    return f"${D(value).quantize(Decimal('0.01')):,}"
+
+
+def _fmt_qty(value) -> str:
+    """Cantidad sin decimales de sobra: 5, 7.5."""
+    d = D(value)
+    if d == d.to_integral_value():
+        return f"{int(d):,}"
+    return f"{d.quantize(Decimal('0.1')):,}"
+
+
+def _shuffle(options: list, seed: str) -> list:
+    """Baraja determinista: mismo proyecto y pregunta, mismo orden siempre."""
+    n = int(hashlib.md5(seed.encode()).hexdigest(), 16) % len(options)
+    return options[n:] + options[:n]
+
+
+def _first_client(db: Session, pid: str) -> Client | None:
+    return db.execute(
+        select(Client).where(Client.project_id == pid, Client.status != "archived")
+        .order_by(Client.created_at)
+    ).scalars().first()
+
+
 def _latest_override(db: Session, pid: str, key: str) -> list[AssumptionSet]:
     """Historial (viejo → vigente) de un supuesto a nivel proyecto/escenario."""
     return db.execute(
@@ -85,10 +112,7 @@ def _scene_data(db: Session, project: Project | None, scenario_ids: list[str]) -
         "horizon_label": f"{project.horizon_months} meses",
     }
 
-    client = db.execute(
-        select(Client).where(Client.project_id == pid, Client.status != "archived")
-        .order_by(Client.created_at)
-    ).scalars().first()
+    client = _first_client(db, pid)
     if client:
         branches = [b for brand in client.brands for b in brand.branches][:2]
         products = [item for b in branches for item in b.catalog_items][:3]
@@ -177,6 +201,75 @@ def _scene_data(db: Session, project: Project | None, scenario_ids: list[str]) -
         }
 
     return scenes
+
+
+def _personal_quiz(db: Session, project: Project | None) -> dict:
+    """Variantes numéricas del quiz con los números del proyecto.
+
+    Respuesta correcta, distractores y feedback se calculan aquí con Decimal
+    (engine/money): el navegador nunca calcula. Si dos opciones coinciden tras
+    redondear, la variante se descarta y queda la pregunta genérica autorada.
+    Devuelve {step_key: {question_id: pregunta}}.
+    """
+    if not project:
+        return {}
+    pid = project.id
+    out: dict[str, dict] = {}
+
+    client = _first_client(db, pid)
+    base = client.baseline if client else None
+    if base and D(base.avg_monthly_sales) > 0 and D(base.avg_monthly_transactions) > 0:
+        sales, tx = D(base.avg_monthly_sales), D(base.avg_monthly_transactions)
+        ticket = (sales / tx).quantize(Decimal("0.01"))
+        formula = f"{_fmt_money(sales)} ÷ {_fmt_int(tx)} = {_fmt_cents(ticket)}"
+        options = [
+            {"text": _fmt_cents(ticket), "correct": True,
+             "feedback": f"Sí: ventas ÷ tickets = {formula}. Ese es el ticket que el motor deriva de TU línea base."},
+            {"text": _fmt_cents(ticket * 2), "correct": False,
+             "feedback": f"No: eso es el doble. Ventas ÷ tickets: {formula}."},
+            {"text": _fmt_cents(ticket / 2), "correct": False,
+             "feedback": f"No: eso es la mitad. Ventas ÷ tickets: {formula}."},
+        ]
+        if len({o["text"] for o in options}) == len(options):
+            out["clientes"] = {"clientes-ticket": {
+                "id": "clientes-ticket",
+                "text": f"Tu cliente «{_trunc(client.trade_name, 24)}» vende {_fmt_money(sales)} "
+                        f"al mes en {_fmt_int(tx)} tickets. ¿Qué ticket promedio deriva el motor?",
+                "uses_real_data": True,
+                "options": _shuffle(options, f"{pid}:clientes-ticket"),
+            }}
+
+    churn_rows = _latest_override(db, pid, "b2b.churn_rate")
+    if churn_rows:
+        try:
+            rate = D(churn_rows[-1].value)
+        except Exception:
+            rate = None
+        if rate is not None and Decimal("0") < rate < Decimal("0.5"):
+            lost = rate * 100                     # sobre 100 clientes
+            pct = _fmt_qty(rate * 100)
+            misread = lost * 10                   # leer 0.05 como 50%
+            options = [
+                {"text": f"{_fmt_qty(lost)} clientes", "correct": True,
+                 "feedback": f"Sí: {churn_rows[-1].value} = {pct}%, y {pct}% de 100 son "
+                             f"{_fmt_qty(lost)} clientes. Es TU churn vigente."},
+                {"text": f"{_fmt_qty(misread)} clientes", "correct": False,
+                 "feedback": f"No: {churn_rows[-1].value} es {pct}%, no {_fmt_qty(misread)}%. "
+                             "En calcuol los porcentajes se escriben como decimal 0–1."},
+                {"text": f"{_fmt_qty(lost * 2)} clientes", "correct": False,
+                 "feedback": f"No: eso sería un churn del doble. Con {churn_rows[-1].value} "
+                             f"pierdes {_fmt_qty(lost)} de cada 100."},
+            ]
+            if len({o["text"] for o in options}) == len(options):
+                out["supuestos"] = {"supuestos-churn": {
+                    "id": "supuestos-churn",
+                    "text": f"Con tu churn vigente de {_trunc(churn_rows[-1].value, 8)} y 100 "
+                            "clientes activos, ¿cuántos pierdes el primer mes (sin reactivación)?",
+                    "uses_real_data": True,
+                    "options": _shuffle(options, f"{pid}:supuestos-churn"),
+                }}
+
+    return out
 
 
 def _steps(db: Session, project: Project | None) -> list:
@@ -292,6 +385,7 @@ def get_onboarding(project_id: str | None = None, db: Session = Depends(get_db))
 
     steps, extra = _steps(db, project)
     scenes = _scene_data(db, project, extra["scenario_ids"])
+    personal_quiz = _personal_quiz(db, project)
     # el primer paso no cumplido es el que está en curso; el resto queda pendiente
     current = next((s for s in steps if not s["done"]), None)
     for step in steps:
@@ -303,6 +397,9 @@ def get_onboarding(project_id: str | None = None, db: Session = Depends(get_db))
             step["status"] = "pendiente"
         step.pop("done")
         step["scene_data"] = scenes.get(step["key"])
+        replacements = personal_quiz.get(step["key"], {})
+        step["quiz"] = [replacements.get(q["id"], {**q, "uses_real_data": False})
+                        for q in step.get("quiz", [])]
 
     completed = sum(1 for s in steps if s["status"] == "completado")
     return {

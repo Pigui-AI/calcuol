@@ -1,10 +1,17 @@
 """Contenido autorado del tutorial (roadmap de activación) — español.
 
 Única fuente del texto pedagógico de los ocho pasos: qué se aprende (what),
-la versión sencilla (eli5), la guía clic por clic (hands_on) y el tip. La
-lógica de estado (qué paso está cumplido y a dónde apunta cada href) vive en
-app/routers/onboarding.py; aquí solo hay contenido, para que al cambiar el
-motor el texto, el quiz y el diálogo de un paso se revisen en el mismo diff.
+la versión sencilla (eli5), la guía clic por clic (hands_on), el tip y el
+quiz «Compruébalo». La lógica de estado (qué paso está cumplido y a dónde
+apunta cada href) vive en app/routers/onboarding.py; aquí solo hay contenido,
+para que al cambiar el motor el texto y el quiz de un paso se revisen en el
+mismo diff.
+
+Reglas del quiz: cada distractor nombra el malentendido típico en su
+feedback; si el repaso corresponde a OTRO paso, la opción lleva review_step.
+Las preguntas numéricas usan la utilería del tutorial; cuando el proyecto
+tiene datos reales, el router las sustituye por variantes calculadas
+server-side con engine/money (el quiz nunca calcula en el navegador).
 """
 
 STEPS = [
@@ -22,6 +29,38 @@ STEPS = [
                      "Escribe un nombre y elige la moneda",
                      "Elige el horizonte: 60 meses te deja ver más lejos",
                      "Avanza con «Guardar y continuar» y al final pulsa «Crear proyecto»"],
+        "quiz": [
+            {
+                "id": "proyecto-horizonte",
+                "text": "Creaste un proyecto a 12 meses y ya simulaste. Ahora quieres ver 60 meses. ¿Qué necesitas?",
+                "options": [
+                    {"text": "Nada: el run de 12 meses se extiende solo a 60",
+                     "correct": False, "review_step": "simulacion",
+                     "feedback": "No: cada run congela su horizonte en el snapshot; para ver 60 meses hay que volver a correr."},
+                    {"text": "Extender el horizonte del proyecto y volver a simular",
+                     "correct": True,
+                     "feedback": "Exacto: puedes mirar menos meses de un run largo, pero no estirar uno corto. Por eso conviene empezar con 60."},
+                    {"text": "Crear otro proyecto desde cero",
+                     "correct": False,
+                     "feedback": "No hace falta: el proyecto se edita cuando quieras; lo que no cambia es un run ya corrido."},
+                ],
+            },
+            {
+                "id": "proyecto-naturaleza",
+                "text": "¿Qué es un proyecto en calcuol?",
+                "options": [
+                    {"text": "La contabilidad oficial del negocio",
+                     "correct": False,
+                     "feedback": "No: es un simulador de escenarios futuros, no un sistema contable."},
+                    {"text": "Un reporte definitivo que ya no debe cambiar",
+                     "correct": False, "review_step": "simulacion",
+                     "feedback": "No: nada del proyecto es definitivo; lo inmutable son los runs, no la maqueta."},
+                    {"text": "Una maqueta editable para probar ideas",
+                     "correct": True,
+                     "feedback": "Sí: tu tablero de juego. Cambias supuestos, corres, comparas — sin miedo."},
+                ],
+            },
+        ],
     },
     {
         "key": "clientes", "title": "Cargar clientes B2B",
@@ -41,6 +80,38 @@ STEPS = [
                      "Captura 3 o 4 productos con su precio y su costo",
                      "En la línea base escribe ventas, tickets y consumidores de un mes típico",
                      "Revisa y pulsa «Crear cliente B2B»"],
+        "quiz": [
+            {
+                "id": "clientes-ticket",
+                "text": "Café Alborada vende $92,000 al mes en 2,400 tickets. ¿Qué ticket promedio deriva el motor?",
+                "options": [
+                    {"text": "$76.67",
+                     "correct": False,
+                     "feedback": "No: eso es el doble. El ticket promedio es ventas ÷ tickets: 92,000 ÷ 2,400 = $38.33."},
+                    {"text": "$38.33",
+                     "correct": True,
+                     "feedback": "Sí: ventas ÷ tickets = 92,000 ÷ 2,400 = $38.33. Así el motor deriva métricas de tus datos."},
+                    {"text": "$19.17",
+                     "correct": False,
+                     "feedback": "No: eso es la mitad. Ventas ÷ tickets: 92,000 ÷ 2,400 = $38.33."},
+                ],
+            },
+            {
+                "id": "clientes-baseline",
+                "text": "¿Por qué conviene capturar la línea base real de cada cliente?",
+                "options": [
+                    {"text": "Sin ella el motor no puede simular",
+                     "correct": False, "review_step": "supuestos",
+                     "feedback": "No: el motor puede correr con sus defaults; la línea base mejora la calidad, no desbloquea el botón."},
+                    {"text": "Solo sirve para llenar la ficha del cliente",
+                     "correct": False,
+                     "feedback": "No: la línea base alimenta la simulación — de ahí salen ticket, margen, frecuencia y conversión."},
+                    {"text": "El motor deriva ticket, margen y frecuencia de tus datos en vez de usar supuestos genéricos",
+                     "correct": True,
+                     "feedback": "Exacto: es lo que más mejora la calidad de la simulación."},
+                ],
+            },
+        ],
     },
     {
         "key": "supuestos", "title": "Ajustar los supuestos",
@@ -57,6 +128,38 @@ STEPS = [
                      "Busca b2b.churn_rate y cámbialo (por ejemplo de 0.03 a 0.05)",
                      "El borde morado significa «cambio sin guardar»",
                      "Pulsa «Guardar cambios»: el origen ahora dirá «escenario» y quedará una versión nueva"],
+        "quiz": [
+            {
+                "id": "supuestos-versionado",
+                "text": "Cambias b2b.churn_rate de 0.03 a 0.05 y guardas. ¿Qué pasó con el 0.03?",
+                "options": [
+                    {"text": "Se borró para siempre",
+                     "correct": False,
+                     "feedback": "No: nada se sobrescribe; cada edición crea una versión nueva con autor y fecha, y la anterior queda guardada."},
+                    {"text": "Quedó guardado como versión anterior, con autor y fecha",
+                     "correct": True,
+                     "feedback": "Sí: como guardar partida en un videojuego — puedes experimentar sin perder el valor previo."},
+                    {"text": "Sigue vigente hasta que vuelvas a simular",
+                     "correct": False, "review_step": "simulacion",
+                     "feedback": "No: el valor vigente ya es 0.05. Lo que no cambia son los runs pasados: congelaron 0.03 en su snapshot."},
+                ],
+            },
+            {
+                "id": "supuestos-churn",
+                "text": "Con churn mensual de 0.05 y 100 clientes activos, ¿cuántos pierdes el primer mes (sin reactivación)?",
+                "options": [
+                    {"text": "5 clientes",
+                     "correct": True,
+                     "feedback": "Sí: 0.05 = 5%, y 5% de 100 son 5 clientes."},
+                    {"text": "50 clientes",
+                     "correct": False,
+                     "feedback": "No: 0.05 es 5%, no 50%. En calcuol los porcentajes se escriben como decimal 0–1 (0.05 = 5%)."},
+                    {"text": "10 clientes",
+                     "correct": False,
+                     "feedback": "No: eso sería un churn de 0.10. Con 0.05 pierdes 5 de cada 100."},
+                ],
+            },
+        ],
     },
     {
         "key": "crecimiento", "title": "Modelar el crecimiento",
@@ -75,6 +178,38 @@ STEPS = [
                      "Baja la capacidad de onboarding a 5 y guarda",
                      "Mira la tabla: la columna «restricción activa» dirá «capacidad_onboarding»",
                      "Visita «Cohortes» para ver cuánta gente sigue activa mes a mes"],
+        "quiz": [
+            {
+                "id": "crecimiento-freno",
+                "text": "Tu curva pide 20 altas este mes, pero la capacidad de onboarding es 8. ¿Cuántas altas da el motor?",
+                "options": [
+                    {"text": "20: la curva manda",
+                     "correct": False,
+                     "feedback": "No: querer no es poder. El freno más apretado (curva, presupuesto o capacidad) decide las altas reales."},
+                    {"text": "14: un punto medio entre ambas",
+                     "correct": False,
+                     "feedback": "No: el motor no promedia restricciones; aplica el mínimo y la columna «restricción activa» te dice cuál fue."},
+                    {"text": "8, y «restricción activa» dirá capacidad_onboarding",
+                     "correct": True,
+                     "feedback": "Exacto: el motor entrega lo que el freno permite y te dice quién frenó, mes a mes."},
+                ],
+            },
+            {
+                "id": "crecimiento-cohortes",
+                "text": "¿Qué aporta el modelo de cohortes frente a un churn plano?",
+                "options": [
+                    {"text": "Modela la retención por antigüedad: cada camada de consumidores retiene distinto según su edad",
+                     "correct": True,
+                     "feedback": "Sí: los recién llegados se van más; los maduros se quedan. Eso el churn plano no lo captura."},
+                    {"text": "Reparte el mismo churn en partes iguales todos los meses",
+                     "correct": False,
+                     "feedback": "No: eso es justamente el churn plano. Las cohortes retienen distinto según su antigüedad."},
+                    {"text": "Es el mismo cálculo con otra gráfica",
+                     "correct": False,
+                     "feedback": "No: cambia el cálculo de fondo — la supervivencia depende de la edad de cada cohorte."},
+                ],
+            },
+        ],
     },
     {
         "key": "operaciones", "title": "Configurar operaciones",
@@ -91,6 +226,38 @@ STEPS = [
                      "Dale una ventana de meses y un empujón de conversión (0.15 = 15%)",
                      "Enciende el interruptor maestro del motor de campañas",
                      "Opcional: crea un plan en «Suscripciones» y un rol en «Equipo e hiring»"],
+        "quiz": [
+            {
+                "id": "operaciones-apagado",
+                "text": "Creas una campaña pero NO enciendes el interruptor maestro del motor de campañas. ¿Qué cambia en tu próxima simulación?",
+                "options": [
+                    {"text": "La campaña aplica igual, porque ya existe",
+                     "correct": False,
+                     "feedback": "No: existir no es estar encendida. Los motores nacen apagados y no afectan resultados hasta que los enciendes."},
+                    {"text": "Nada: los motores apagados no afectan los resultados",
+                     "correct": True,
+                     "feedback": "Exacto: por eso puedes configurar con calma y encender cuando quieras medir el efecto."},
+                    {"text": "La simulación falla por configuración incompleta",
+                     "correct": False, "review_step": "simulacion",
+                     "feedback": "No: el snapshot congela lo que hay, apagado incluido; el run corre igual."},
+                ],
+            },
+            {
+                "id": "operaciones-uno-a-uno",
+                "text": "¿Cuál es la forma recomendada de incorporar los motores extra (campañas, suscripciones, tokens…)?",
+                "options": [
+                    {"text": "De uno en uno: enciendes, miras qué cambia y decides",
+                     "correct": True,
+                     "feedback": "Sí: encendiendo de uno en uno sabes exactamente qué motor causó qué cambio."},
+                    {"text": "Todos a la vez, para ver el escenario completo de una",
+                     "correct": False, "review_step": "analisis",
+                     "feedback": "No: si enciendes todo junto no sabrás qué causó qué. Aislar variables es el mismo principio de la sensibilidad."},
+                    {"text": "Nunca: son decorativos",
+                     "correct": False,
+                     "feedback": "No: son motores reales del cálculo — campañas, suscripciones y tokens mueven ingresos y costos cuando están encendidos."},
+                ],
+            },
+        ],
     },
     {
         "key": "simulacion", "title": "Ejecutar la simulación",
@@ -107,6 +274,38 @@ STEPS = [
                      "Espera unos segundos a que el run diga «Exitoso»",
                      "Abre los resultados: dashboard, plan mensual, P&L, flujo y unit economics",
                      "Fíjate en el hash del run: es la huella de esa foto"],
+        "quiz": [
+            {
+                "id": "simulacion-determinismo",
+                "text": "Corres la simulación dos veces sin tocar nada entre una y otra. ¿Qué obtienes?",
+                "options": [
+                    {"text": "Números parecidos, con algo de variación aleatoria",
+                     "correct": False,
+                     "feedback": "No: el motor es determinista, no hay azar. Misma foto + mismo motor = mismos números, siempre."},
+                    {"text": "Exactamente los mismos números",
+                     "correct": True,
+                     "feedback": "Sí: mismo snapshot y misma versión del motor producen el mismo resultado. Por eso un plan se puede defender."},
+                    {"text": "Depende de la carga del servidor ese día",
+                     "correct": False,
+                     "feedback": "No: el servidor puede tardar más o menos, pero el resultado es idéntico — el cálculo no depende del entorno."},
+                ],
+            },
+            {
+                "id": "simulacion-snapshot",
+                "text": "¿Qué es el snapshot de un run?",
+                "options": [
+                    {"text": "Una captura de pantalla de los resultados",
+                     "correct": False,
+                     "feedback": "No: es de los INPUTS, no de los resultados: todo lo que capturaste, congelado antes de calcular."},
+                    {"text": "Un respaldo de la base de datos",
+                     "correct": False,
+                     "feedback": "No: es la foto de los inputs de ESE run — supuestos, clientes, motores — con su hash como huella."},
+                    {"text": "La foto congelada de todos los inputs al momento de simular",
+                     "correct": True,
+                     "feedback": "Exacto: y como la foto no cambia, el run siempre se puede reproducir."},
+                ],
+            },
+        ],
     },
     {
         "key": "analisis", "title": "Analizar y comparar",
@@ -126,6 +325,38 @@ STEPS = [
                      "Lee el tornado: la barra más larga es tu prioridad",
                      "En «Comparador» selecciona dos runs y mira los deltas",
                      "En «Conclusiones» acepta o descarta lo que el motor propone"],
+        "quiz": [
+            {
+                "id": "analisis-aislamiento",
+                "text": "En sensibilidad, ¿por qué cada corrida cambia UNA sola variable?",
+                "options": [
+                    {"text": "Para que los impactos sean comparables contra el mismo punto de partida",
+                     "correct": True,
+                     "feedback": "Sí: si movieras dos perillas a la vez no sabrías cuál movió la aguja."},
+                    {"text": "Porque el motor no soporta cambiar varias",
+                     "correct": False,
+                     "feedback": "No: para varios cambios a la vez está el comparador de escenarios; en sensibilidad el aislamiento es el método, no una limitación."},
+                    {"text": "Para ahorrar tiempo de cómputo",
+                     "correct": False,
+                     "feedback": "No: es una decisión metodológica — con una sola variable por corrida los impactos se pueden ordenar en el tornado."},
+                ],
+            },
+            {
+                "id": "analisis-tornado",
+                "text": "En el tornado, ¿qué significa la barra más larga?",
+                "options": [
+                    {"text": "La variable con el valor más grande",
+                     "correct": False,
+                     "feedback": "No: mide impacto sobre la métrica objetivo, no tamaño del valor. Un churn de 0.05 puede pesar más que un CAC de $3,500."},
+                    {"text": "La palanca que más mueve la métrica objetivo: tu prioridad",
+                     "correct": True,
+                     "feedback": "Exacto: ahí es donde vale la pena poner el esfuerzo primero."},
+                    {"text": "El supuesto con más versiones guardadas",
+                     "correct": False, "review_step": "supuestos",
+                     "feedback": "No: las versiones son historial de edición; el tornado mide impacto en el resultado."},
+                ],
+            },
+        ],
     },
     {
         "key": "entregable", "title": "Exportar el plan",
@@ -142,6 +373,38 @@ STEPS = [
                      "Pulsa «Exportar a Excel» y descarga el archivo",
                      "Pulsa «Documento ejecutivo» y ábrelo en el navegador",
                      "Imprímelo a PDF si lo vas a enviar: el run va citado en la portada"],
+        "quiz": [
+            {
+                "id": "entregable-cita",
+                "text": "¿Por qué el Excel y el documento ejecutivo citan el run que los originó?",
+                "options": [
+                    {"text": "Para que cualquier número se pueda rastrear hasta la corrida exacta que lo produjo",
+                     "correct": True,
+                     "feedback": "Sí: ningún número circula sin saber de dónde salió — esa es la promesa del sello del run."},
+                    {"text": "Por estética de la portada",
+                     "correct": False,
+                     "feedback": "No: el run citado es trazabilidad, no decoración — permite reproducir cada número."},
+                    {"text": "Para impedir que alguien edite el archivo",
+                     "correct": False,
+                     "feedback": "No: el archivo se puede editar; lo que la cita garantiza es que el original siempre se puede reproducir desde su snapshot."},
+                ],
+            },
+            {
+                "id": "entregable-defensa",
+                "text": "Presentas el plan y te preguntan: «¿de dónde salió este número?». ¿Qué contestas?",
+                "options": [
+                    {"text": "Es una estimación aproximada de la hoja de cálculo",
+                     "correct": False, "review_step": "simulacion",
+                     "feedback": "No: nada es «aproximado» — cada número sale de un run determinista que se puede volver a correr."},
+                    {"text": "Del run citado en la portada: con su snapshot se reproduce exacto",
+                     "correct": True,
+                     "feedback": "Exacto: misma foto, mismos números. Esa es la defensa de tu plan."},
+                    {"text": "Habría que rehacer el modelo para averiguarlo",
+                     "correct": False,
+                     "feedback": "No hace falta rehacer nada: el snapshot del run citado conserva todos los inputs que lo produjeron."},
+                ],
+            },
+        ],
     },
 ]
 

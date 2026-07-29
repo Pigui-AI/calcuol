@@ -267,6 +267,16 @@ export interface TutorialSceneData {
   top_lever?: string;
   run_ref?: string;
 }
+/** Opción del quiz «Compruébalo»: el feedback de cada distractor nombra el
+ *  malentendido; review_step apunta al paso que conviene repasar. */
+export interface QuizOption {
+  text: string; correct: boolean; feedback: string; review_step?: string;
+}
+export interface QuizQuestion {
+  id: string; text: string; options: QuizOption[];
+  /** true cuando la pregunta usa números reales del proyecto (calculados server-side) */
+  uses_real_data: boolean;
+}
 export interface OnboardingStep {
   key: string; order: number; title: string; short: string; icon: string;
   status: "completado" | "en_progreso" | "pendiente";
@@ -274,6 +284,7 @@ export interface OnboardingStep {
   eli5: string; hands_on: string[];
   /** opcionales: el backend puede ser más viejo que el frontend */
   scene_data?: TutorialSceneData | null;
+  quiz?: QuizQuestion[];
 }
 export interface OnboardingRoadmap {
   project: { id: string; name: string } | null;

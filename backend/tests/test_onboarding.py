@@ -90,6 +90,31 @@ def test_scene_data_empty_db_is_null(client):
     assert all(s["scene_data"] is None for s in steps)
 
 
+def test_quiz_authored_shape():
+    from app.content.tutorial_es import STEPS, STEP_KEYS
+
+    seen_ids = set()
+    for step in STEPS:
+        assert step.get("quiz"), f"paso {step['key']}: sin quiz"
+        for q in step["quiz"]:
+            assert q["id"] not in seen_ids, f"id de pregunta duplicado: {q['id']}"
+            seen_ids.add(q["id"])
+            assert q["text"].strip()
+            corrects = [o for o in q["options"] if o.get("correct")]
+            assert len(corrects) == 1, f"{q['id']}: debe haber exactamente una correcta"
+            for o in q["options"]:
+                assert o.get("feedback", "").strip(), f"{q['id']}: opción sin feedback"
+                if "review_step" in o:
+                    assert o["review_step"] in STEP_KEYS, f"{q['id']}: review_step inválido"
+
+
+def test_quiz_empty_db_is_authored(client):
+    steps = client.get("/onboarding").json()["steps"]
+    for s in steps:
+        assert s["quiz"], f"paso {s['key']}: sin quiz en la respuesta"
+        assert all(q["uses_real_data"] is False for q in s["quiz"])
+
+
 def _seed_project(db):
     from app.models import (Project, Scenario, Client, Brand, Branch, ProductService,
                             ClientBaseline, AssumptionSet, SimulationRun,
@@ -162,3 +187,30 @@ def test_scene_data_with_seeded_project(client, session_factory):
     # sin campaña ni override de capacidad: esas escenas quedan en utilería
     assert steps["operaciones"]["scene_data"] is None
     assert steps["crecimiento"]["scene_data"] is None
+
+
+def test_quiz_personalized_with_seeded_project(client, session_factory):
+    db = session_factory()
+    _seed_project(db)
+    db.close()
+
+    steps = {s["key"]: s for s in client.get("/onboarding").json()["steps"]}
+
+    # ticket promedio con la línea base real: 148,500 ÷ 3,120 = $47.60 (Decimal)
+    ticket_q = next(q for q in steps["clientes"]["quiz"] if q["id"] == "clientes-ticket")
+    assert ticket_q["uses_real_data"] is True
+    assert "148,500" in ticket_q["text"] and "3,120" in ticket_q["text"]
+    corrects = [o for o in ticket_q["options"] if o["correct"]]
+    assert len(corrects) == 1 and corrects[0]["text"] == "$47.60"
+
+    # churn vigente 0.05 → pierdes 5 de cada 100; el distractor nombra el
+    # malentendido decimal/porcentaje
+    churn_q = next(q for q in steps["supuestos"]["quiz"] if q["id"] == "supuestos-churn")
+    assert churn_q["uses_real_data"] is True and "0.05" in churn_q["text"]
+    corrects = [o for o in churn_q["options"] if o["correct"]]
+    assert len(corrects) == 1 and corrects[0]["text"] == "5 clientes"
+    assert any("decimal 0–1" in o["feedback"] for o in churn_q["options"])
+
+    # las conceptuales autoradas siguen ahí, sin marcar como personalizadas
+    conceptual = next(q for q in steps["clientes"]["quiz"] if q["id"] == "clientes-baseline")
+    assert conceptual["uses_real_data"] is False

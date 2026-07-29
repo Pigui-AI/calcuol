@@ -7,6 +7,7 @@ import Link from "next/link";
 import { api, OnboardingRoadmap, OnboardingStep } from "@/lib/api";
 import { Button } from "@/components/ui";
 import TutorialScene from "@/components/TutorialScenes";
+import StepQuiz, { QuizScore } from "@/components/StepQuiz";
 
 const ICONS: Record<string, React.ReactNode> = {
   folder: <path d="M3 7a2 2 0 0 1 2-2h3.6l1.7 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />,
@@ -53,7 +54,11 @@ function StepIcon({ icon, status }: { icon: string; status: string }) {
   );
 }
 
-function StepDetail({ step, personalized }: { step: OnboardingStep; personalized: boolean }) {
+function StepDetail({ step, personalized, quizScore, onQuizFinish, onReview }: {
+  step: OnboardingStep; personalized: boolean; quizScore?: QuizScore;
+  onQuizFinish: (stepKey: string, correct: number, total: number) => void;
+  onReview: (stepKey: string) => void;
+}) {
   const meta = STATUS_META[step.status] ?? STATUS_META.pendiente;
   return (
     <div className={`rounded-lg border p-4 ${step.status === "en_progreso"
@@ -98,6 +103,11 @@ function StepDetail({ step, personalized }: { step: OnboardingStep; personalized
         </div>
       )}
 
+      {(step.quiz?.length ?? 0) > 0 && (
+        <StepQuiz stepKey={step.key} questions={step.quiz!} personalized={personalized}
+          score={quizScore} onFinish={onQuizFinish} onReview={onReview} />
+      )}
+
       <p className="mt-2 rounded-md bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-600">
         <span className="font-semibold text-slate-700">Para tenerlo en cuenta: </span>{step.tip}
       </p>
@@ -113,6 +123,7 @@ function StepDetail({ step, personalized }: { step: OnboardingStep; personalized
 }
 
 const PRIVACY_KEY = "calcuol.tutorial.privacy.v1";
+const QUIZ_KEY = "calcuol.tutorial.quiz.v1";
 
 export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
   const [data, setData] = useState<OnboardingRoadmap | null>(null);
@@ -120,6 +131,7 @@ export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [personalized, setPersonalized] = useState(true);
+  const [quizScores, setQuizScores] = useState<Record<string, QuizScore>>({});
 
   useEffect(() => {
     api.get<OnboardingRoadmap>(`/onboarding${projectId ? `?project_id=${projectId}` : ""}`)
@@ -128,7 +140,10 @@ export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
   }, [projectId]);
 
   useEffect(() => {
-    try { setPersonalized(localStorage.getItem(PRIVACY_KEY) !== "generic"); } catch { /* SSR/privado */ }
+    try {
+      setPersonalized(localStorage.getItem(PRIVACY_KEY) !== "generic");
+      setQuizScores(JSON.parse(localStorage.getItem(QUIZ_KEY) ?? "{}"));
+    } catch { /* SSR/privado */ }
   }, []);
   const togglePersonalized = () => {
     setPersonalized((v) => {
@@ -136,6 +151,22 @@ export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
       return !v;
     });
   };
+  const handleQuizFinish = (stepKey: string, correct: number, total: number) => {
+    setQuizScores((prev) => {
+      const before = prev[stepKey];
+      const next = {
+        ...prev,
+        [stepKey]: {
+          best: Math.max(before?.best ?? 0, correct),
+          total,
+          passed: (before?.passed ?? false) || (total > 0 && correct === total),
+        },
+      };
+      try { localStorage.setItem(QUIZ_KEY, JSON.stringify(next)); } catch { /* sin storage */ }
+      return next;
+    });
+  };
+  const reviewStep = (stepKey: string) => { setSelected(stepKey); setOpen(true); };
 
   if (failed || !data) return null;   // el roadmap nunca bloquea la pantalla
 
@@ -202,6 +233,10 @@ export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
                   <span className={`text-xs font-medium leading-tight ${
                     isSelected ? "text-pigui-700" : "text-slate-700"}`}>{step.short}</span>
                   <span className={`text-[11px] ${meta.text}`}>{meta.label}</span>
+                  {quizScores[step.key]?.passed && (
+                    <span className="text-[10px] font-medium text-emerald-600"
+                      title="Aprobaste el quiz de este paso: hecho Y entendido">🎯 entendido</span>
+                  )}
                 </button>
                 {i < data.steps.length - 1 && (
                   <span className={`mt-6 h-0.5 w-full min-w-[16px] ${
@@ -216,7 +251,9 @@ export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
       {open && detailStep && (
         <div className="mt-5 border-t border-slate-100 pt-5">
           <div className="grid gap-3 lg:grid-cols-2">
-            <StepDetail step={detailStep} personalized={personalized} />
+            <StepDetail step={detailStep} personalized={personalized}
+              quizScore={quizScores[detailStep.key]}
+              onQuizFinish={handleQuizFinish} onReview={reviewStep} />
             <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-4">
               <p className="text-sm font-semibold text-slate-800">Todos los pasos</p>
               <ol className="mt-2 space-y-1">
