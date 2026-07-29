@@ -251,11 +251,29 @@ export interface ConclusionsResponse {
 }
 
 // ---------- roadmap de activación (tutorial guiado) ----------
+/** Datos reales del proyecto para una escena, ya formateados y truncados por
+ *  el servidor. Todos opcionales: cada escena cae a su utilería por dato. */
+export interface TutorialSceneData {
+  is_real: boolean;
+  project_name?: string; currency?: string; horizon_label?: string;
+  client_name?: string; branches?: string[];
+  products?: { name: string; price: string }[];
+  baseline_line?: string;
+  old_value?: string; new_value?: string; v_old_label?: string; v_new_label?: string;
+  capacity_label?: string;
+  campaign_name?: string; campaign_window?: string;
+  campaign_start?: number; campaign_end?: number;
+  hash_short?: string;
+  top_lever?: string;
+  run_ref?: string;
+}
 export interface OnboardingStep {
   key: string; order: number; title: string; short: string; icon: string;
   status: "completado" | "en_progreso" | "pendiente";
   detail: string | null; href: string; what: string; tip: string;
   eli5: string; hands_on: string[];
+  /** opcionales: el backend puede ser más viejo que el frontend */
+  scene_data?: TutorialSceneData | null;
 }
 export interface OnboardingRoadmap {
   project: { id: string; name: string } | null;

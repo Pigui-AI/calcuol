@@ -23,14 +23,18 @@ GOLDEN_PATH = os.path.join(os.path.dirname(__file__), "golden_onboarding.json")
 
 
 @pytest.fixture()
-def client():
+def session_factory():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
                            poolclass=StaticPool, future=True)
     Base.metadata.create_all(engine)
-    TestSession = sessionmaker(bind=engine, future=True)
+    yield sessionmaker(bind=engine, future=True)
+    engine.dispose()
 
+
+@pytest.fixture()
+def client(session_factory):
     def override_get_db():
-        db = TestSession()
+        db = session_factory()
         try:
             yield db
         finally:
@@ -79,3 +83,82 @@ def test_content_module_shape():
         for field in ("key", "title", "short", "icon", "what", "tip", "eli5", "hands_on"):
             assert step.get(field), f"paso {step.get('key')}: falta {field}"
         assert isinstance(step["hands_on"], list) and step["hands_on"]
+
+
+def test_scene_data_empty_db_is_null(client):
+    steps = client.get("/onboarding").json()["steps"]
+    assert all(s["scene_data"] is None for s in steps)
+
+
+def _seed_project(db):
+    from app.models import (Project, Scenario, Client, Brand, Branch, ProductService,
+                            ClientBaseline, AssumptionSet, SimulationRun,
+                            SensitivityAnalysis)
+
+    project = Project(name="Plan Cafeterías Norte 2027", start_month="2026-08",
+                      horizon_months=60, base_currency="MXN")
+    db.add(project)
+    db.flush()
+    scenario = Scenario(project_id=project.id, name="Base", engine_version="test")
+    db.add(scenario)
+    db.flush()
+    cl = Client(project_id=project.id, legal_name="Alborada SA",
+                trade_name="Café La Esperanza del Barrio", industry="cafetería")
+    db.add(cl)
+    db.flush()
+    brand = Brand(client_id=cl.id, name="La Esperanza")
+    db.add(brand)
+    db.flush()
+    branch = Branch(brand_id=brand.id, name="Sucursal Centro Histórico")
+    db.add(branch)
+    db.flush()
+    db.add(ProductService(branch_id=branch.id, name="Café de olla grande",
+                          sale_price="48", direct_cost="17"))
+    db.add(ClientBaseline(client_id=cl.id, avg_monthly_sales="148500",
+                          avg_monthly_transactions="3120", avg_ticket="47.60",
+                          active_consumers=812))
+    db.add(AssumptionSet(project_id=project.id, scenario_id=scenario.id,
+                         scope_type="scenario", key="b2b.churn_rate",
+                         value="0.05", version=1))
+    db.add(SimulationRun(scenario_id=scenario.id, engine_version="test",
+                         status="succeeded", snapshot={}, input_hash="abc123def456",
+                         horizon_months=60))
+    db.add(SensitivityAnalysis(project_id=project.id, scenario_id=scenario.id,
+                               engine_version="test", input_hash="abc123def456",
+                               target_metric="ebitda", variables=[],
+                               results=[{"key": "b2b.cac", "impact": "1200"},
+                                        {"key": "b2b.churn_rate", "impact": "-8400"}]))
+    db.commit()
+
+
+def test_scene_data_with_seeded_project(client, session_factory):
+    db = session_factory()
+    _seed_project(db)
+    db.close()
+
+    steps = {s["key"]: s for s in client.get("/onboarding").json()["steps"]}
+
+    proyecto = steps["proyecto"]["scene_data"]
+    assert proyecto["is_real"] and proyecto["currency"] == "MXN"
+    assert proyecto["horizon_label"] == "60 meses"
+    assert len(proyecto["project_name"]) <= 18  # truncado para la escena
+
+    clientes = steps["clientes"]["scene_data"]
+    assert len(clientes["client_name"]) <= 18
+    assert clientes["products"][0]["price"] == "$48"
+    assert "ventas $148,500" in clientes["baseline_line"]
+    assert "3,120 tickets" in clientes["baseline_line"]
+
+    supuestos = steps["supuestos"]["scene_data"]
+    assert supuestos["new_value"] == "0.05"
+    assert supuestos["old_value"] == "0.03"        # sin versión previa cae al default
+    assert supuestos["v_old_label"] == "default · 0.03 · motor"
+    assert "v1 · 0.05 · vigente" in supuestos["v_new_label"]
+
+    assert steps["simulacion"]["scene_data"]["hash_short"] == "abc123…"
+    assert steps["entregable"]["scene_data"]["run_ref"] == "run abc123 citado"
+    # la palanca con mayor |impacto| gana el tornado
+    assert steps["analisis"]["scene_data"]["top_lever"] == "churn"
+    # sin campaña ni override de capacidad: esas escenas quedan en utilería
+    assert steps["operaciones"]["scene_data"] is None
+    assert steps["crecimiento"]["scene_data"] is None

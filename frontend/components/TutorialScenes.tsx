@@ -1,10 +1,15 @@
 "use client";
 /** Mini-escenas animadas del tutorial: cada una "actúa" cómo se usa un paso de
- *  la plataforma (llenar valores, guardar, simular…). Son puramente visuales:
- *  todos los números que muestran son de utilería, no cálculos. */
+ *  la plataforma (llenar valores, guardar, simular…). Por defecto son utilería
+ *  visual; si el servidor manda `scene_data` (datos reales del proyecto, ya
+ *  formateados y truncados), la escena reproduce lo que el usuario hizo. El
+ *  fallback es por dato: cualquier campo ausente usa la utilería. */
 import { useEffect, useState } from "react";
+import { TutorialSceneData } from "@/lib/api";
 
 const D = (s: number) => ({ animationDelay: `${s}s` });
+
+type SceneProps = { d?: TutorialSceneData };
 
 /** Campo de formulario que se "escribe" solo. */
 function Field({ label, value, delay, w = "w-24" }:
@@ -26,44 +31,52 @@ function Caption({ text, delay }: { text: string; delay: number }) {
   );
 }
 
-function SceneProyecto() {
+function SceneProyecto({ d }: SceneProps) {
   return (
     <div className="relative h-full p-3">
       <div className="mx-auto w-56 rounded-lg border border-slate-200 bg-white p-2.5 shadow-sm">
         <p className="mb-1.5 text-[10px] font-semibold text-slate-600">Nuevo proyecto</p>
         <div className="space-y-1.5">
-          <Field label="Nombre" value="Mi plan Pigui" delay={0.3} />
-          <Field label="Moneda" value="MXN" delay={1.2} w="w-12" />
-          <Field label="Horizonte" value="60 meses" delay={1.9} w="w-16" />
+          <Field label="Nombre" value={d?.project_name ?? "Mi plan Pigui"} delay={0.3} />
+          <Field label="Moneda" value={d?.currency ?? "MXN"} delay={1.2} w="w-12" />
+          <Field label="Horizonte" value={d?.horizon_label ?? "60 meses"} delay={1.9} w="w-16" />
         </div>
         <div className="a-press mt-2 w-max rounded-md bg-pigui-600 px-2.5 py-1 text-[10px] font-medium text-white"
           style={D(3.0)}>Crear proyecto</div>
       </div>
       <div className="a-pop absolute right-4 top-6 rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-1.5 text-[10px] font-medium text-emerald-700 shadow-sm"
         style={D(3.6)}>✓ Proyecto creado</div>
-      <Caption text="Llenas tres datos y ya tienes tu tablero de juego" delay={4.2} />
+      <Caption text={d ? "Así nació este proyecto: tu tablero de juego" :
+        "Llenas tres datos y ya tienes tu tablero de juego"} delay={4.2} />
     </div>
   );
 }
 
-function SceneClientes() {
+function SceneClientes({ d }: SceneProps) {
+  const branches = d?.branches?.length ? d.branches : ["Centro", "Norte"];
+  const products: [string, string][] = d?.products?.length
+    ? d.products.map((p) => [p.name, p.price] as [string, string])
+    : [["Café americano", "$45"], ["Croissant", "$38"], ["Latte", "$55"]];
+  const baseline = d?.baseline_line ?? "Línea base: ventas $92,000 · 2,400 tickets · 740 consumidores";
   return (
     <div className="relative h-full p-3">
       <div className="a-pop mx-auto w-60 rounded-lg border border-slate-200 bg-white p-2.5 shadow-sm" style={D(0.2)}>
-        <p className="text-[11px] font-semibold text-slate-700">🏪 Café Alborada</p>
+        <p className="text-[11px] font-semibold text-slate-700">🏪 {d?.client_name ?? "Café Alborada"}</p>
         <div className="mt-1 flex gap-1.5">
-          <span className="a-pop rounded bg-pigui-50 px-1.5 py-0.5 text-[9px] text-pigui-700" style={D(0.9)}>📍 Centro</span>
-          <span className="a-pop rounded bg-pigui-50 px-1.5 py-0.5 text-[9px] text-pigui-700" style={D(1.3)}>📍 Norte</span>
+          {branches.map((name, i) => (
+            <span key={name} className="a-pop rounded bg-pigui-50 px-1.5 py-0.5 text-[9px] text-pigui-700"
+              style={D(0.9 + i * 0.4)}>📍 {name}</span>
+          ))}
         </div>
         <div className="mt-1.5 space-y-1 border-t border-slate-100 pt-1.5">
-          {[["Café americano", "$45", 1.8], ["Croissant", "$38", 2.3], ["Latte", "$55", 2.8]].map(([n, p, d]) => (
-            <div key={n as string} className="a-fade flex justify-between text-[10px] text-slate-600" style={D(d as number)}>
+          {products.map(([n, p], i) => (
+            <div key={n} className="a-fade flex justify-between text-[10px] text-slate-600" style={D(1.8 + i * 0.5)}>
               <span>{n}</span><span className="font-medium">{p}</span>
             </div>
           ))}
         </div>
         <div className="a-slide-up mt-1.5 rounded bg-slate-50 px-1.5 py-1 text-[9px] text-slate-500" style={D(3.4)}>
-          Línea base: ventas $92,000 · 2,400 tickets · 740 consumidores
+          {baseline}
         </div>
       </div>
       <Caption text="Sucursales + menú + números de un mes normal = el motor ya la conoce" delay={4.2} />
@@ -71,33 +84,36 @@ function SceneClientes() {
   );
 }
 
-function SceneSupuestos() {
+function SceneSupuestos({ d }: SceneProps) {
   return (
     <div className="relative h-full p-3">
       <div className="mx-auto w-64 rounded-lg border border-slate-200 bg-white p-2.5 shadow-sm">
         <p className="mb-1 text-[10px] font-semibold text-slate-600">Churn mensual B2B</p>
         <p className="font-mono text-[9px] text-slate-400">b2b.churn_rate</p>
         <div className="mt-1.5 flex items-center gap-2">
-          <span className="rounded border border-slate-200 px-2 py-1 font-mono text-[11px] text-slate-400 line-through">0.03</span>
+          <span className="rounded border border-slate-200 px-2 py-1 font-mono text-[11px] text-slate-400 line-through">
+            {d?.old_value ?? "0.03"}</span>
           <span className="text-slate-400">→</span>
           <span className="a-pop rounded border-2 border-pigui-500 px-2 py-1 font-mono text-[11px] font-semibold text-pigui-700"
-            style={D(1.0)}>0.05</span>
+            style={D(1.0)}>{d?.new_value ?? "0.05"}</span>
           <span className="a-press ml-1 rounded-md bg-pigui-600 px-2 py-1 text-[10px] font-medium text-white" style={D(2.2)}>
             Guardar
           </span>
         </div>
         <div className="mt-2 flex items-center gap-1.5">
-          <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] text-slate-500">v1 · 0.03 · guardada</span>
+          <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] text-slate-500">
+            {d?.v_old_label ?? "v1 · 0.03 · guardada"}</span>
           <span className="a-pop rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700"
-            style={D(2.9)}>v2 · 0.05 · vigente ✓</span>
+            style={D(2.9)}>{d?.v_new_label ?? "v2 · 0.05 · vigente ✓"}</span>
         </div>
       </div>
-      <Caption text="Como guardar partida en un videojuego: la versión anterior no se borra" delay={3.8} />
+      <Caption text={d ? "Tu churn quedó así: la versión anterior sigue guardada" :
+        "Como guardar partida en un videojuego: la versión anterior no se borra"} delay={3.8} />
     </div>
   );
 }
 
-function SceneCrecimiento() {
+function SceneCrecimiento({ d }: SceneProps) {
   return (
     <div className="relative h-full p-3">
       <svg viewBox="0 0 240 105" className="mx-auto h-28 w-full max-w-[280px]">
@@ -110,7 +126,7 @@ function SceneCrecimiento() {
         <line x1="18" y1="45" x2="230" y2="45" stroke="#f59e0b" strokeWidth="1.5"
           strokeDasharray="5 4" className="a-fade" style={D(1.9)} />
         <text x="222" y="40" fontSize="8" fill="#b45309" textAnchor="end" className="a-fade" style={D(2.2)}>
-          capacidad del equipo
+          {d?.capacity_label ?? "capacidad del equipo"}
         </text>
         {/* altas reales: barras recortadas por el techo */}
         {[[40, 14], [70, 22], [100, 33], [130, 42], [160, 47], [190, 47], [215, 47]].map(([x, h], i) => (
@@ -124,26 +140,33 @@ function SceneCrecimiento() {
   );
 }
 
-function SceneOperaciones() {
+function SceneOperaciones({ d }: SceneProps) {
   const rows: [string, number][] = [["Campañas", 0.4], ["Suscripciones", 1.1], ["IA y tokens", 1.8]];
+  const start = d?.campaign_start ?? 3;
+  const end = d?.campaign_end ?? 8;
   return (
     <div className="relative h-full p-3">
       <div className="mx-auto w-56 space-y-1.5 rounded-lg border border-slate-200 bg-white p-2.5 shadow-sm">
-        {rows.map(([name, d]) => (
+        {rows.map(([name, delay]) => (
           <div key={name} className="flex items-center justify-between">
             <span className="text-[10px] text-slate-600">{name}</span>
             <span className="relative inline-flex h-4 w-8 items-center rounded-full bg-emerald-400/90">
-              <span className="a-knob absolute left-0 h-3 w-3 rounded-full bg-white shadow" style={D(d)} />
+              <span className="a-knob absolute left-0 h-3 w-3 rounded-full bg-white shadow" style={D(delay)} />
             </span>
           </div>
         ))}
         <div className="border-t border-slate-100 pt-1.5">
-          <p className="text-[9px] text-slate-400">Campaña «Promo» · meses 3–8</p>
+          <p className="text-[9px] text-slate-400">
+            Campaña {d?.campaign_name ?? "«Promo»"} · {d?.campaign_window ?? "meses 3–8"}
+          </p>
           <div className="mt-1 flex gap-0.5">
-            {Array.from({ length: 12 }, (_, i) => (
-              <span key={i} className={`h-3 w-3.5 rounded-sm ${i >= 2 && i <= 7 ? "a-pop bg-pigui-500" : "bg-slate-100"}`}
-                style={i >= 2 && i <= 7 ? D(2.5 + (i - 2) * 0.15) : undefined} />
-            ))}
+            {Array.from({ length: 12 }, (_, i) => {
+              const active = i + 1 >= start && i + 1 <= end;
+              return (
+                <span key={i} className={`h-3 w-3.5 rounded-sm ${active ? "a-pop bg-pigui-500" : "bg-slate-100"}`}
+                  style={active ? D(2.5 + (i + 1 - start) * 0.15) : undefined} />
+              );
+            })}
           </div>
         </div>
       </div>
@@ -152,7 +175,7 @@ function SceneOperaciones() {
   );
 }
 
-function SceneSimulacion() {
+function SceneSimulacion({ d }: SceneProps) {
   return (
     <div className="relative h-full p-3">
       <div className="mx-auto flex w-64 items-start gap-3">
@@ -170,61 +193,67 @@ function SceneSimulacion() {
             ))}
           </div>
           <p className="a-fade mt-1 font-mono text-[8px] text-slate-400" style={D(3.4)}>
-            hash <span className="text-emerald-600">62dd88…</span> — misma foto, mismos números
+            hash <span className="text-emerald-600">{d?.hash_short ?? "62dd88…"}</span> — misma foto, mismos números
           </p>
         </div>
       </div>
-      <Caption text="Primero la foto, luego la historia mes a mes: por eso es repetible" delay={4.2} />
+      <Caption text={d ? "Ese hash es la huella de tu última corrida exitosa" :
+        "Primero la foto, luego la historia mes a mes: por eso es repetible"} delay={4.2} />
     </div>
   );
 }
 
-function SceneAnalisis() {
+function SceneAnalisis({ d }: SceneProps) {
+  const top = d?.top_lever ?? "churn";
+  const rest = ["churn", "CAC", "ticket", "conversión"].filter((l) => l !== top).slice(0, 3);
   const bars: [string, number, number, boolean][] = [
-    ["churn", 78, 0.5, true], ["CAC", 52, 1.1, false], ["ticket", 34, 1.7, false], ["conversión", 22, 2.3, false],
+    [top, 78, 0.5, true], [rest[0], 52, 1.1, false], [rest[1], 34, 1.7, false], [rest[2], 22, 2.3, false],
   ];
   return (
     <div className="relative h-full p-3">
       <div className="mx-auto w-60 rounded-lg border border-slate-200 bg-white p-2.5 shadow-sm">
         <p className="mb-1.5 text-[10px] font-semibold text-slate-600">¿Qué mueve más el EBITDA?</p>
-        {bars.map(([name, w, d, top]) => (
+        {bars.map(([name, w, delay, isTop]) => (
           <div key={name} className="mb-1 flex items-center gap-1.5">
-            <span className="w-16 shrink-0 text-right font-mono text-[9px] text-slate-500">{name}</span>
-            <span className={`a-grow-x h-3.5 rounded-r ${top ? "bg-pigui-600" : "bg-pigui-300"}`}
-              style={{ width: `${w}%`, ...D(d) }} />
-            {top && <span className="a-pop text-[9px] font-semibold text-pigui-700" style={D(3.0)}>← prioridad</span>}
+            <span className="w-16 shrink-0 truncate text-right font-mono text-[9px] text-slate-500">{name}</span>
+            <span className={`a-grow-x h-3.5 rounded-r ${isTop ? "bg-pigui-600" : "bg-pigui-300"}`}
+              style={{ width: `${w}%`, ...D(delay) }} />
+            {isTop && <span className="a-pop text-[9px] font-semibold text-pigui-700" style={D(3.0)}>← prioridad</span>}
           </div>
         ))}
         <p className="a-fade mt-1 text-[9px] text-slate-400" style={D(3.4)}>
           cada barra = mover una sola perilla
         </p>
       </div>
-      <Caption text="La barra más larga te dice dónde poner el esfuerzo primero" delay={4.0} />
+      <Caption text={d ? "Tu tornado real: esa palanca es la que más mueve tu EBITDA" :
+        "La barra más larga te dice dónde poner el esfuerzo primero"} delay={4.0} />
     </div>
   );
 }
 
-function SceneEntregable() {
+function SceneEntregable({ d }: SceneProps) {
   return (
     <div className="relative h-full p-3">
       <div className="mx-auto flex w-60 items-end justify-center gap-4">
         <div className="a-slide-up w-28 rounded-lg border border-slate-200 bg-white p-2 shadow-sm" style={D(0.4)}>
           <p className="text-[9px] font-semibold text-emerald-700">📊 Excel</p>
           <div className="mt-1 space-y-0.5">
-            {[0.9, 1.2, 1.5, 1.8].map((d, i) => (
-              <span key={i} className="a-grow-x block h-1.5 rounded bg-slate-200" style={{ width: `${88 - i * 14}%`, ...D(d) }} />
+            {[0.9, 1.2, 1.5, 1.8].map((delay, i) => (
+              <span key={i} className="a-grow-x block h-1.5 rounded bg-slate-200" style={{ width: `${88 - i * 14}%`, ...D(delay) }} />
             ))}
           </div>
-          <p className="a-fade mt-1 font-mono text-[8px] text-slate-400" style={D(2.1)}>11 hojas · 60 meses</p>
+          <p className="a-fade mt-1 font-mono text-[8px] text-slate-400" style={D(2.1)}>
+            11 hojas · {d?.horizon_label ?? "60 meses"}</p>
         </div>
         <div className="a-slide-up w-28 rounded-lg border border-slate-200 bg-white p-2 shadow-sm" style={D(1.0)}>
           <p className="text-[9px] font-semibold text-pigui-700">📄 Documento</p>
           <div className="mt-1 space-y-0.5">
-            {[1.5, 1.8, 2.1, 2.4].map((d, i) => (
-              <span key={i} className="a-grow-x block h-1.5 rounded bg-slate-200" style={{ width: `${92 - i * 10}%`, ...D(d) }} />
+            {[1.5, 1.8, 2.1, 2.4].map((delay, i) => (
+              <span key={i} className="a-grow-x block h-1.5 rounded bg-slate-200" style={{ width: `${92 - i * 10}%`, ...D(delay) }} />
             ))}
           </div>
-          <p className="a-fade mt-1 font-mono text-[8px] text-slate-400" style={D(2.7)}>run a1b2c3 citado</p>
+          <p className="a-fade mt-1 font-mono text-[8px] text-slate-400" style={D(2.7)}>
+            {d?.run_ref ?? "run a1b2c3 citado"}</p>
         </div>
         <div className="a-bounce text-pigui-600" style={D(3.0)}>
           <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2"
@@ -236,7 +265,7 @@ function SceneEntregable() {
   );
 }
 
-const SCENES: Record<string, () => React.JSX.Element> = {
+const SCENES: Record<string, (props: SceneProps) => React.JSX.Element> = {
   proyecto: SceneProyecto,
   clientes: SceneClientes,
   supuestos: SceneSupuestos,
@@ -247,7 +276,8 @@ const SCENES: Record<string, () => React.JSX.Element> = {
   entregable: SceneEntregable,
 };
 
-export default function TutorialScene({ stepKey }: { stepKey: string }) {
+export default function TutorialScene({ stepKey, data }:
+  { stepKey: string; data?: TutorialSceneData }) {
   const [cycle, setCycle] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setCycle((c) => c + 1), 9500);
@@ -256,9 +286,14 @@ export default function TutorialScene({ stepKey }: { stepKey: string }) {
   const Scene = SCENES[stepKey] ?? SceneProyecto;
   return (
     <div className="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50/80">
-      <div key={`${stepKey}-${cycle}`} className="tut-scene h-44 w-full">
-        <Scene />
+      <div key={`${stepKey}-${cycle}-${data ? "real" : "demo"}`} className="tut-scene h-44 w-full">
+        <Scene d={data} />
       </div>
+      {data && (
+        <span className="absolute left-2 top-2 rounded-full border border-emerald-200 bg-emerald-50/95 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+          ● con tus datos
+        </span>
+      )}
       <button onClick={() => setCycle((c) => c + 1)}
         className="absolute right-2 top-2 rounded-md border border-slate-200 bg-white/90 px-2 py-0.5 text-[10px] font-medium text-slate-500 hover:text-pigui-700"
         title="Repetir la animación">↻ Repetir</button>

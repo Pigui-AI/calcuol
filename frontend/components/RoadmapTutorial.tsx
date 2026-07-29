@@ -53,7 +53,7 @@ function StepIcon({ icon, status }: { icon: string; status: string }) {
   );
 }
 
-function StepDetail({ step }: { step: OnboardingStep }) {
+function StepDetail({ step, personalized }: { step: OnboardingStep; personalized: boolean }) {
   const meta = STATUS_META[step.status] ?? STATUS_META.pendiente;
   return (
     <div className={`rounded-lg border p-4 ${step.status === "en_progreso"
@@ -70,7 +70,7 @@ function StepDetail({ step }: { step: OnboardingStep }) {
       <p className="mt-2 text-sm leading-relaxed text-slate-600">{step.what}</p>
 
       <div className="mt-3">
-        <TutorialScene stepKey={step.key} />
+        <TutorialScene stepKey={step.key} data={personalized ? step.scene_data ?? undefined : undefined} />
       </div>
 
       <div className="mt-3 rounded-md border border-sky-100 bg-sky-50/70 px-3 py-2">
@@ -112,11 +112,14 @@ function StepDetail({ step }: { step: OnboardingStep }) {
   );
 }
 
+const PRIVACY_KEY = "calcuol.tutorial.privacy.v1";
+
 export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
   const [data, setData] = useState<OnboardingRoadmap | null>(null);
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const [personalized, setPersonalized] = useState(true);
 
   useEffect(() => {
     api.get<OnboardingRoadmap>(`/onboarding${projectId ? `?project_id=${projectId}` : ""}`)
@@ -124,10 +127,21 @@ export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
       .catch(() => setFailed(true));
   }, [projectId]);
 
+  useEffect(() => {
+    try { setPersonalized(localStorage.getItem(PRIVACY_KEY) !== "generic"); } catch { /* SSR/privado */ }
+  }, []);
+  const togglePersonalized = () => {
+    setPersonalized((v) => {
+      try { localStorage.setItem(PRIVACY_KEY, v ? "generic" : "real"); } catch { /* sin storage */ }
+      return !v;
+    });
+  };
+
   if (failed || !data) return null;   // el roadmap nunca bloquea la pantalla
 
   const pct = Math.round((data.completed / data.total) * 100);
   const detailStep = data.steps.find((s) => s.key === selected) ?? data.steps[0];
+  const anyRealData = data.steps.some((s) => s.scene_data);
 
   return (
     <div className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -152,6 +166,13 @@ export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
             <p className="text-sm font-semibold text-slate-900">{data.completed} de {data.total}</p>
             <p className="text-[11px] text-slate-400">pasos completados</p>
           </div>
+          {anyRealData && (
+            <button onClick={togglePersonalized}
+              className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50"
+              title="Los ejemplos del tutorial pueden usar tus datos reales o utilería genérica (útil al compartir pantalla)">
+              {personalized ? "🙈 Usar datos de ejemplo" : "🏪 Usar mis datos"}
+            </button>
+          )}
           <button onClick={() => setOpen((v) => !v)}
             className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
             {open ? "Ocultar guía" : "Ver todos los pasos"}
@@ -195,7 +216,7 @@ export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
       {open && detailStep && (
         <div className="mt-5 border-t border-slate-100 pt-5">
           <div className="grid gap-3 lg:grid-cols-2">
-            <StepDetail step={detailStep} />
+            <StepDetail step={detailStep} personalized={personalized} />
             <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-4">
               <p className="text-sm font-semibold text-slate-800">Todos los pasos</p>
               <ol className="mt-2 space-y-1">

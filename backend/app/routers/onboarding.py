@@ -7,12 +7,15 @@ paso apunta a la pantalla donde se completa y explica qué se aprende ahí.
 El contenido autorado (what/tip/eli5/hands_on) vive en
 app/content/tutorial_es.py; aquí solo se calcula el estado y los enlaces.
 """
+from decimal import Decimal
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from app.content.tutorial_es import STEPS as CONTENT
 from app.database import get_db
+from app.engine.money import D
 from app.models import (Project, Scenario, Client, AssumptionSet, SimulationRun,
                         Campaign, SubscriptionPlan, HiringRole, SensitivityAnalysis,
                         ExecutiveConclusion, ExportJob, ImportJob)
@@ -22,6 +25,158 @@ router = APIRouter()
 # Claves cuya presencia como override indica que el usuario modeló el crecimiento
 GROWTH_PREFIXES = ("b2b.curve.", "b2b.churn_rate", "b2b.cac", "b2b.acquisition",
                    "b2b.onboarding", "b2c.cohort.", "b2c.consumer_churn")
+
+# Nombre corto de cada palanca para el tornado de la escena de análisis
+LEVER_LABELS = {
+    "b2b.churn_rate": "churn", "b2b.cac": "CAC", "b2b.curve.rate": "curva",
+    "b2b.curve.max_clients": "techo", "b2c.avg_ticket": "ticket",
+    "b2c.purchase_conversion": "conversión", "b2c.purchase_frequency": "frecuencia",
+    "b2c.consumer_churn_rate": "churn B2C", "revenue.commission.pigui_pct": "comisión",
+    "payments.stripe_share": "ruta Stripe",
+}
+
+
+def _trunc(text: str, limit: int) -> str:
+    """Recorta para no romper los anchos fijos de las escenas (w-56/w-64)."""
+    text = (text or "").strip()
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _fmt_money(value) -> str:
+    """Monto compacto para utilería visual: $45, $92,000, $1.2M."""
+    d = D(value)
+    if abs(d) >= Decimal("1000000"):
+        compact = (d / Decimal("1000000")).quantize(Decimal("0.1"))
+        text = f"${compact}M"
+        return text.replace(".0M", "M")
+    return f"${d.quantize(Decimal('1')):,}"
+
+
+def _fmt_int(value) -> str:
+    return f"{int(D(value)):,}"
+
+
+def _latest_override(db: Session, pid: str, key: str) -> list[AssumptionSet]:
+    """Historial (viejo → vigente) de un supuesto a nivel proyecto/escenario."""
+    return db.execute(
+        select(AssumptionSet)
+        .where(AssumptionSet.project_id == pid, AssumptionSet.key == key,
+               AssumptionSet.scope_type.in_(("global", "scenario")))
+        .order_by(AssumptionSet.created_at, AssumptionSet.version)
+    ).scalars().all()
+
+
+def _scene_data(db: Session, project: Project | None, scenario_ids: list[str]) -> dict:
+    """Datos reales del proyecto para las escenas, ya formateados y truncados.
+
+    Cada escena tiene su variante de utilería en el frontend; aquí solo se
+    devuelven las claves que existen de verdad (fallback por dato, no por
+    paso). Nunca se calcula nada nuevo: se reusa lo que la BD ya conoce.
+    """
+    if not project:
+        return {}
+    pid = project.id
+    scenes: dict[str, dict] = {}
+
+    scenes["proyecto"] = {
+        "is_real": True,
+        "project_name": _trunc(project.name, 18),
+        "currency": project.base_currency,
+        "horizon_label": f"{project.horizon_months} meses",
+    }
+
+    client = db.execute(
+        select(Client).where(Client.project_id == pid, Client.status != "archived")
+        .order_by(Client.created_at)
+    ).scalars().first()
+    if client:
+        branches = [b for brand in client.brands for b in brand.branches][:2]
+        products = [item for b in branches for item in b.catalog_items][:3]
+        data = {
+            "is_real": True,
+            "client_name": _trunc(client.trade_name, 18),
+        }
+        if branches:
+            data["branches"] = [_trunc(b.name, 10) for b in branches]
+        if products:
+            data["products"] = [{"name": _trunc(p.name, 14), "price": _fmt_money(p.sale_price)}
+                                for p in products]
+        if client.baseline and D(client.baseline.avg_monthly_sales) > 0:
+            base = client.baseline
+            data["baseline_line"] = (
+                f"Línea base: ventas {_fmt_money(base.avg_monthly_sales)} · "
+                f"{_fmt_int(base.avg_monthly_transactions)} tickets · "
+                f"{_fmt_int(base.active_consumers)} consumidores")
+        scenes["clientes"] = data
+
+    churn_rows = _latest_override(db, pid, "b2b.churn_rate")
+    if churn_rows:
+        current = churn_rows[-1]
+        previous = churn_rows[-2] if len(churn_rows) > 1 else None
+        old_value = previous.value if previous else "0.03"
+        old_label = (f"v{previous.version} · {_trunc(previous.value, 8)} · guardada"
+                     if previous else "default · 0.03 · motor")
+        scenes["supuestos"] = {
+            "is_real": True,
+            "old_value": _trunc(old_value, 8),
+            "new_value": _trunc(current.value, 8),
+            "v_old_label": old_label,
+            "v_new_label": f"v{current.version} · {_trunc(current.value, 8)} · vigente ✓",
+        }
+
+    capacity_rows = _latest_override(db, pid, "b2b.onboarding_capacity_monthly")
+    if capacity_rows:
+        scenes["crecimiento"] = {
+            "is_real": True,
+            "capacity_label": f"capacidad del equipo ({_trunc(capacity_rows[-1].value, 6)}/mes)",
+        }
+
+    campaign = db.execute(
+        select(Campaign).where(Campaign.project_id == pid).order_by(Campaign.created_at)
+    ).scalars().first()
+    if campaign:
+        scenes["operaciones"] = {
+            "is_real": True,
+            "campaign_name": f"«{_trunc(campaign.name, 12)}»",
+            "campaign_window": f"meses {campaign.start_month}–{campaign.end_month}",
+            "campaign_start": campaign.start_month,
+            "campaign_end": campaign.end_month,
+        }
+
+    run = None
+    if scenario_ids:
+        run = db.execute(
+            select(SimulationRun).where(SimulationRun.scenario_id.in_(scenario_ids),
+                                        SimulationRun.status == "succeeded")
+            .order_by(SimulationRun.created_at.desc())
+        ).scalars().first()
+    if run:
+        hash_short = f"{run.input_hash[:6]}…"
+        scenes["simulacion"] = {"is_real": True, "hash_short": hash_short}
+        scenes["entregable"] = {
+            "is_real": True,
+            "horizon_label": f"{run.horizon_months} meses",
+            "run_ref": f"run {run.input_hash[:6]} citado",
+        }
+
+    analysis = db.execute(
+        select(SensitivityAnalysis).where(SensitivityAnalysis.project_id == pid)
+        .order_by(SensitivityAnalysis.created_at.desc())
+    ).scalars().first()
+    if analysis and isinstance(analysis.results, list) and analysis.results:
+        def impact_of(row):
+            try:
+                return abs(D(row.get("impact") or 0))
+            except Exception:
+                return Decimal("0")
+        top = max(analysis.results, key=impact_of)
+        key = top.get("key", "")
+        scenes["analisis"] = {
+            "is_real": True,
+            "top_lever": LEVER_LABELS.get(key, _trunc(key.split(".")[-1], 10)),
+        }
+
+    return scenes
 
 
 def _steps(db: Session, project: Project | None) -> list:
@@ -51,6 +206,7 @@ def _steps(db: Session, project: Project | None) -> list:
                   + count(SubscriptionPlan, SubscriptionPlan.project_id == pid)
                   + count(HiringRole, HiringRole.project_id == pid))
     runs_ok = 0
+    scenario_ids: list[str] = []
     if scenario_id:
         scenario_ids = db.execute(select(Scenario.id).where(Scenario.project_id == pid)).scalars().all()
         runs_ok = db.execute(select(func.count()).select_from(SimulationRun).where(
@@ -119,7 +275,8 @@ def _steps(db: Session, project: Project | None) -> list:
         },
     }
 
-    return [{**content, **dynamic[content["key"]]} for content in CONTENT], {"imports": imports}
+    extra = {"imports": imports, "scenario_ids": scenario_ids}
+    return [{**content, **dynamic[content["key"]]} for content in CONTENT], extra
 
 
 @router.get("/onboarding")
@@ -134,6 +291,7 @@ def get_onboarding(project_id: str | None = None, db: Session = Depends(get_db))
                              .order_by(Project.created_at.desc())).scalars().first()
 
     steps, extra = _steps(db, project)
+    scenes = _scene_data(db, project, extra["scenario_ids"])
     # el primer paso no cumplido es el que está en curso; el resto queda pendiente
     current = next((s for s in steps if not s["done"]), None)
     for step in steps:
@@ -144,6 +302,7 @@ def get_onboarding(project_id: str | None = None, db: Session = Depends(get_db))
         else:
             step["status"] = "pendiente"
         step.pop("done")
+        step["scene_data"] = scenes.get(step["key"])
 
     completed = sum(1 for s in steps if s["status"] == "completado")
     return {
