@@ -21,18 +21,21 @@ export default function StepQuiz({ stepKey, questions, personalized, score, onFi
   const [picked, setPicked] = useState<Record<number, number>>({});
   const [finished, setFinished] = useState(false);
 
-  useEffect(() => { setIdx(0); setPicked({}); setFinished(false); }, [stepKey]);
+  // el set de preguntas visibles cambia con el paso Y con el modo privacidad:
+  // en ambos casos el intento en curso se reinicia para no cruzar índices
+  useEffect(() => { setIdx(0); setPicked({}); setFinished(false); }, [stepKey, personalized]);
 
   // en modo «datos de ejemplo» se ocultan las preguntas con números reales
   const visible = personalized ? questions : questions.filter((q) => !q.uses_real_data);
   if (!visible.length) return null;
 
-  const q = visible[Math.min(idx, visible.length - 1)];
-  const chosen = picked[idx];
+  const safeIdx = Math.min(idx, visible.length - 1);
+  const q = visible[safeIdx];
+  const chosen = picked[safeIdx];
   const answered = chosen !== undefined;
   const correctCount = visible.reduce((acc, qq, i) =>
     acc + (picked[i] !== undefined && qq.options[picked[i]]?.correct ? 1 : 0), 0);
-  const isLast = idx === visible.length - 1;
+  const isLast = safeIdx >= visible.length - 1;
 
   const finish = () => {
     setFinished(true);
@@ -58,7 +61,7 @@ export default function StepQuiz({ stepKey, questions, personalized, score, onFi
             </span>
           )}
           {!finished && (
-            <span className="text-[10px] text-slate-400">{idx + 1} de {visible.length}</span>
+            <span className="text-[10px] text-slate-400">{safeIdx + 1} de {visible.length}</span>
           )}
         </div>
       </div>
@@ -90,7 +93,7 @@ export default function StepQuiz({ stepKey, questions, personalized, score, onFi
                     : "border-slate-100 bg-white text-slate-400";
               return (
                 <button key={i} disabled={answered}
-                  onClick={() => setPicked((p) => ({ ...p, [idx]: i }))}
+                  onClick={() => setPicked((p) => ({ ...p, [safeIdx]: i }))}
                   className={`block w-full rounded-md border px-2 py-1.5 text-left text-xs leading-relaxed transition ${cls}`}>
                   {o.text}
                 </button>
@@ -109,7 +112,7 @@ export default function StepQuiz({ stepKey, questions, personalized, score, onFi
                     Repasar ese paso →
                   </button>
                 )}
-                <button onClick={() => (isLast ? finish() : setIdx((i) => i + 1))}
+                <button onClick={() => (isLast ? finish() : setIdx(safeIdx + 1))}
                   className="rounded-md bg-pigui-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-pigui-700">
                   {isLast ? "Ver resultado" : "Siguiente"}
                 </button>

@@ -189,14 +189,19 @@ function NextActionBanner({ data, quizScores, onReview }: {
     );
   }
 
-  const unquizzed = data.steps.find((s) => !quizScores[s.key]?.passed);
+  // solo cuentan los pasos que traen quiz: con un backend anterior (sin el
+  // campo) el cierre no puede exigir un quiz que no existe
+  const anyQuiz = data.steps.some((s) => (s.quiz?.length ?? 0) > 0);
+  const unquizzed = data.steps.find((s) => (s.quiz?.length ?? 0) > 0 && !quizScores[s.key]?.passed);
   return (
     <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2">
       <p className="text-xs text-emerald-800">
         {unquizzed
           ? <>Los 8 pasos están hechos 🎉 Para cerrar el círculo, comprueba que también los
               dominas: te falta el quiz de «{unquizzed.title}».</>
-          : <>Ruta completa y entendida 🎉 Hiciste los 8 pasos y aprobaste todos los quizzes.</>}
+          : anyQuiz
+            ? <>Ruta completa y entendida 🎉 Hiciste los 8 pasos y aprobaste todos los quizzes.</>
+            : <>Ruta completa 🎉 Hiciste los 8 pasos.</>}
       </p>
       {unquizzed && (
         <button onClick={() => onReview(unquizzed.key)}
@@ -239,11 +244,14 @@ export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
   const handleQuizFinish = (stepKey: string, correct: number, total: number) => {
     setQuizScores((prev) => {
       const before = prev[stepKey];
+      // best/total viajan en pareja (el toggle de privacidad puede cambiar el
+      // número de preguntas entre intentos): gana el intento con mejor proporción
+      const better = !before || correct * (before.total || 1) >= before.best * (total || 1);
       const next = {
         ...prev,
         [stepKey]: {
-          best: Math.max(before?.best ?? 0, correct),
-          total,
+          best: better ? correct : before.best,
+          total: better ? total : before.total,
           passed: (before?.passed ?? false) || (total > 0 && correct === total),
         },
       };

@@ -144,6 +144,9 @@ function SceneOperaciones({ d }: SceneProps) {
   const rows: [string, number][] = [["Campañas", 0.4], ["Suscripciones", 1.1], ["IA y tokens", 1.8]];
   const start = d?.campaign_start ?? 3;
   const end = d?.campaign_end ?? 8;
+  // la tira muestra la ventana de 12 meses donde arranca la campaña, para que
+  // una campaña real de meses 13-18 no se pinte como "nunca activa"
+  const windowBase = Math.floor((Math.max(1, start) - 1) / 12) * 12;
   return (
     <div className="relative h-full p-3">
       <div className="mx-auto w-56 space-y-1.5 rounded-lg border border-slate-200 bg-white p-2.5 shadow-sm">
@@ -161,10 +164,11 @@ function SceneOperaciones({ d }: SceneProps) {
           </p>
           <div className="mt-1 flex gap-0.5">
             {Array.from({ length: 12 }, (_, i) => {
-              const active = i + 1 >= start && i + 1 <= end;
+              const month = windowBase + i + 1;
+              const active = month >= start && month <= end;
               return (
                 <span key={i} className={`h-3 w-3.5 rounded-sm ${active ? "a-pop bg-pigui-500" : "bg-slate-100"}`}
-                  style={active ? D(2.5 + (i + 1 - start) * 0.15) : undefined} />
+                  style={active ? D(2.5 + (month - start) * 0.15) : undefined} />
               );
             })}
           </div>

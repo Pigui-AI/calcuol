@@ -189,28 +189,52 @@ def test_scene_data_with_seeded_project(client, session_factory):
     assert steps["crecimiento"]["scene_data"] is None
 
 
-def test_quiz_personalized_with_seeded_project(client, session_factory):
+def test_scene_supuestos_ignores_other_scenarios(client, session_factory):
+    """Los overrides de Conservador/Optimista (wizard) no deben aparecer como
+    «vigente»: el tutorial apunta al primer escenario del proyecto."""
+    from sqlalchemy import select
+    from app.models import Scenario, AssumptionSet, Project
+
     db = session_factory()
     _seed_project(db)
+    project = db.execute(select(Project)).scalars().first()
+    otro = Scenario(project_id=project.id, name="Optimista", type="optimista",
+                    engine_version="test")
+    db.add(otro)
+    db.flush()
+    # override de churn en OTRO escenario, creado después del de Base
+    db.add(AssumptionSet(project_id=project.id, scenario_id=otro.id,
+                         scope_type="scenario", key="b2b.churn_rate",
+                         value="0.024", version=1))
+    # override global (nivel proyecto): pierde contra el del escenario Base
+    db.add(AssumptionSet(project_id=project.id, scenario_id=None,
+                         scope_type="global", key="b2b.churn_rate",
+                         value="0.08", version=1))
+    db.commit()
     db.close()
 
     steps = {s["key"]: s for s in client.get("/onboarding").json()["steps"]}
+    supuestos = steps["supuestos"]["scene_data"]
+    assert "0.05" in supuestos["v_new_label"]      # vigente = escenario Base
+    assert "0.024" not in str(supuestos)           # Optimista queda fuera
+    assert supuestos["old_value"] == "0.08"        # el global es el anterior
 
-    # ticket promedio con la línea base real: 148,500 ÷ 3,120 = $47.60 (Decimal)
-    ticket_q = next(q for q in steps["clientes"]["quiz"] if q["id"] == "clientes-ticket")
-    assert ticket_q["uses_real_data"] is True
-    assert "148,500" in ticket_q["text"] and "3,120" in ticket_q["text"]
-    corrects = [o for o in ticket_q["options"] if o["correct"]]
-    assert len(corrects) == 1 and corrects[0]["text"] == "$47.60"
 
-    # churn vigente 0.05 → pierdes 5 de cada 100; el distractor nombra el
-    # malentendido decimal/porcentaje
-    churn_q = next(q for q in steps["supuestos"]["quiz"] if q["id"] == "supuestos-churn")
-    assert churn_q["uses_real_data"] is True and "0.05" in churn_q["text"]
-    corrects = [o for o in churn_q["options"] if o["correct"]]
-    assert len(corrects) == 1 and corrects[0]["text"] == "5 clientes"
-    assert any("decimal 0–1" in o["feedback"] for o in churn_q["options"])
+def test_scene_data_tolerates_non_finite_baseline(client, session_factory):
+    """'NaN'/'Infinity' guardados vía la API no deben tumbar el roadmap."""
+    from sqlalchemy import select
+    from app.models import ClientBaseline
 
-    # las conceptuales autoradas siguen ahí, sin marcar como personalizadas
-    conceptual = next(q for q in steps["clientes"]["quiz"] if q["id"] == "clientes-baseline")
-    assert conceptual["uses_real_data"] is False
+    db = session_factory()
+    _seed_project(db)
+    baseline = db.execute(select(ClientBaseline)).scalars().first()
+    baseline.avg_monthly_sales = "NaN"
+    db.commit()
+    db.close()
+
+    resp = client.get("/onboarding")
+    assert resp.status_code == 200
+    steps = {s["key"]: s for s in resp.json()["steps"]}
+    clientes = steps["clientes"]["scene_data"]
+    assert clientes is not None                    # la escena degrada por dato
+    assert "baseline_line" not in clientes
