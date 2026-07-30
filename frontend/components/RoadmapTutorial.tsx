@@ -4,37 +4,16 @@
  *  solo lo presenta. */
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { api, OnboardingRoadmap, OnboardingStep } from "@/lib/api";
 import { Button } from "@/components/ui";
 import TutorialScene from "@/components/TutorialScenes";
 import StepQuiz, { QuizScore } from "@/components/StepQuiz";
 import DialogueLesson from "@/components/DialogueLesson";
+import { ICONS, STATUS_META } from "@/components/roadmapMeta";
 
-const ICONS: Record<string, React.ReactNode> = {
-  folder: <path d="M3 7a2 2 0 0 1 2-2h3.6l1.7 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />,
-  store: <path d="M4 9h16v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9Zm-1-4h18l-1.2 3.2a2 2 0 0 1-1.9 1.3H6.1a2 2 0 0 1-1.9-1.3L3 5Z" />,
-  sliders: <path d="M5 5v14M12 5v14M19 5v14M2.5 9h5M9.5 15h5M16.5 8h5" />,
-  trending: <path d="M3 17l5.5-5.5 3.5 3.5L21 6M21 6h-5M21 6v5" />,
-  gear: <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm8-3.5c0 .6-.06 1.1-.16 1.6l2 1.5-2 3.4-2.3-.9c-.8.7-1.7 1.2-2.7 1.5L14.5 22h-4l-.4-2.4c-1-.3-1.9-.8-2.7-1.5l-2.3.9-2-3.4 2-1.5A8.6 8.6 0 0 1 5 12c0-.6.06-1.1.16-1.6l-2-1.5 2-3.4 2.3.9c.8-.7 1.7-1.2 2.7-1.5L10.5 2h4l.4 2.4c1 .3 1.9.8 2.7 1.5l2.3-.9 2 3.4-2 1.5c.1.5.16 1 .16 1.6Z" />,
-  play: <path d="M8 5.5v13l11-6.5-11-6.5Z" />,
-  chart: <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />,
-  download: <path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M4 19h16" />,
-};
-
-const STATUS_META: Record<string, { label: string; text: string; ring: string; circle: string }> = {
-  completado: {
-    label: "Completado", text: "text-emerald-600",
-    ring: "border-emerald-500 bg-emerald-500", circle: "text-white",
-  },
-  en_progreso: {
-    label: "En progreso", text: "text-pigui-700",
-    ring: "border-pigui-600 bg-pigui-600 ring-4 ring-pigui-100", circle: "text-white",
-  },
-  pendiente: {
-    label: "Pendiente", text: "text-slate-400",
-    ring: "border-slate-200 bg-white", circle: "text-slate-300",
-  },
-};
+// el mapa solo carga si el usuario lo abre: no penaliza la home
+const ConceptMap = dynamic(() => import("@/components/ConceptMap"), { ssr: false, loading: () => null });
 
 function StepIcon({ icon, status }: { icon: string; status: string }) {
   const meta = STATUS_META[status] ?? STATUS_META.pendiente;
@@ -146,6 +125,7 @@ function StepDetail({ step, personalized, quizScore, onQuizFinish, onReview, han
 const PRIVACY_KEY = "calcuol.tutorial.privacy.v1";
 const QUIZ_KEY = "calcuol.tutorial.quiz.v1";
 const HANDSON_KEY = "calcuol.tutorial.handson.v1";
+const VIEW_KEY = "calcuol.tutorial.view.v1";
 
 /** Siguiente acción sugerida. Combina el estado real del servidor
  *  (current_key) con los quizzes fallidos en localStorage, y siempre dice el
@@ -226,6 +206,7 @@ export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
   const [personalized, setPersonalized] = useState(true);
   const [quizScores, setQuizScores] = useState<Record<string, QuizScore>>({});
   const [handsOn, setHandsOn] = useState<Record<string, number[]>>({});
+  const [view, setView] = useState<"ruta" | "mapa">("ruta");
 
   useEffect(() => {
     api.get<OnboardingRoadmap>(`/onboarding${projectId ? `?project_id=${projectId}` : ""}`)
@@ -238,6 +219,7 @@ export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
       setPersonalized(localStorage.getItem(PRIVACY_KEY) !== "generic");
       setQuizScores(JSON.parse(localStorage.getItem(QUIZ_KEY) ?? "{}"));
       setHandsOn(JSON.parse(localStorage.getItem(HANDSON_KEY) ?? "{}"));
+      if (localStorage.getItem(VIEW_KEY) === "mapa") setView("mapa");
     } catch { /* SSR/privado */ }
   }, []);
   const togglePersonalized = () => {
@@ -265,6 +247,10 @@ export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
     });
   };
   const reviewStep = (stepKey: string) => { setSelected(stepKey); setOpen(true); };
+  const switchView = (v: "ruta" | "mapa") => {
+    setView(v);
+    try { localStorage.setItem(VIEW_KEY, v); } catch { /* sin storage */ }
+  };
   const toggleHandsOn = (stepKey: string, index: number) => {
     setHandsOn((prev) => {
       const current = new Set(prev[stepKey] ?? []);
@@ -324,7 +310,27 @@ export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
 
       <NextActionBanner data={data} quizScores={quizScores} onReview={reviewStep} />
 
-      <div className="mt-5 overflow-x-auto pb-1">
+      <div className="mt-5 flex items-center justify-between gap-2">
+        <div className="flex rounded-lg border border-slate-200 bg-white p-0.5">
+          {(["ruta", "mapa"] as const).map((v) => (
+            <button key={v} onClick={() => switchView(v)}
+              className={`rounded-md px-3 py-1 text-xs font-medium ${
+                view === v ? "bg-pigui-600 text-white" : "text-slate-500 hover:bg-slate-50"}`}>
+              {v === "ruta" ? "Ruta" : "Mapa del motor"}
+            </button>
+          ))}
+        </div>
+        {view === "mapa" && (
+          <span className="text-[11px] text-slate-400">qué depende de qué, con tu estado real</span>
+        )}
+      </div>
+
+      {view === "mapa" ? (
+        <div className="mt-3">
+          <ConceptMap steps={data.steps} quizScores={quizScores} onSelect={reviewStep} />
+        </div>
+      ) : (
+      <div className="mt-3 overflow-x-auto pb-1">
         <div className="flex min-w-[820px] items-start">
           {data.steps.map((step, i) => {
             const meta = STATUS_META[step.status] ?? STATUS_META.pendiente;
@@ -356,6 +362,7 @@ export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
           })}
         </div>
       </div>
+      )}
 
       {open && detailStep && (
         <div className="mt-5 border-t border-slate-100 pt-5">
