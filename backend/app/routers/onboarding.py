@@ -354,15 +354,15 @@ def get_onboarding(background_tasks: BackgroundTasks, project_id: str | None = N
     if provider is not None and project is not None:
         ctx = _rewrite_context(db, project)
         fp = render.fingerprint(project.id, ctx, steps, provider.model)
-        cached = render.get_cached(fp)
+        cached = render.get_cached(project.id, fp)
         if cached is not None:
             rewritten = cached
             rewrite_status = "listo"
         else:
-            if render.should_generate(fp):
-                background_tasks.add_task(render.generate, provider, fp, ctx,
-                                          [dict(s) for s in steps])
-            rewrite_status = render.status(fp)
+            if render.should_generate(project.id, fp):
+                background_tasks.add_task(render.generate, provider, project.id,
+                                          fp, ctx, [dict(s) for s in steps])
+            rewrite_status = render.status(project.id, fp)
 
     # el primer paso no cumplido es el que está en curso; el resto queda pendiente
     current = next((s for s in steps if not s["done"]), None)

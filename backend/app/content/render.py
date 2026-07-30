@@ -6,12 +6,16 @@ reglas deterministas alrededor:
 
 - La salida usa el MISMO esquema que las plantillas y se valida con Pydantic.
 - Guard de números: la redacción no puede introducir cifras que no existan en
-  el contenido original o en el contexto del proyecto (el LLM redacta, no
-  calcula — los números siempre salen del motor).
+  el contenido autorado (cualquier paso) o en el contexto del proyecto — el
+  LLM redacta, no calcula. Se conserva el punto decimal al comparar ("1.2" no
+  se confunde con "12") y se vigilan multiplicadores pegados a cifras
+  ("5 mil", "$1.2M"). Los números escritos con letra ("quinientos") quedan
+  fuera del guard: los cubre el system prompt, no esta red.
 - Validación por paso: un paso inválido se descarta y ese paso sirve la
   versión autorada (fallback por slot, no por lote).
-- Caché en memoria por fingerprint (proyecto + contexto + contenido + modelo):
-  mismo estado, misma redacción; cambiar el contenido autorado la invalida.
+- Caché en memoria de UNA entrada por proyecto: un fingerprint nuevo
+  (contexto, contenido o modelo distinto) reemplaza la entrada anterior, así
+  la memoria queda acotada por proyectos vivos, no por historial de cambios.
 - La generación corre en background: GET /onboarding nunca espera al LLM.
 
 El quiz NUNCA se re-redacta: sus afirmaciones sobre el motor son verificadas
@@ -25,13 +29,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-MAX_ATTEMPTS = 3          # tras 3 fallos por fingerprint se deja de intentar
+MAX_ATTEMPTS = 3          # tras 3 fallos por estado se deja de intentar
 LENGTH_RATIO_MAX = 2.5    # la redacción no puede inflar un campo más de 2.5x
 
 _lock = threading.Lock()
-_cache: dict[str, dict] = {}      # fingerprint -> {step_key: rewritten_dict}
-_pending: set[str] = set()
-_failures: dict[str, int] = {}
+_cache: dict[str, tuple[str, dict]] = {}     # project_id -> (fingerprint, pasos)
+_failures: dict[str, tuple[str, int]] = {}   # project_id -> (fingerprint, intentos)
+_pending: set[str] = set()                   # fingerprints generándose ahora
 
 
 class RewrittenTurn(BaseModel):
@@ -58,14 +62,18 @@ SYSTEM_PROMPT = (
     "1. NO cambies ninguna afirmación sobre cómo funciona la plataforma: qué se "
     "edita y qué no, qué congela un snapshot, qué motores nacen apagados, qué "
     "verifica el servidor. Solo cambias ejemplos, analogías y tono.\n"
-    "2. NO introduzcas números que no estén en el contenido original o en el "
-    "contexto del proyecto. El LLM redacta; los números salen del motor.\n"
+    "2. NO introduzcas números nuevos, ni en cifra ni escritos con letra: usa "
+    "solo cantidades que ya estén en el contenido original o en el contexto del "
+    "proyecto, sin cambiarles la escala. El LLM redacta; los números salen del motor.\n"
     "3. Conserva la estructura: mismos pasos (mismo key), y en cada diálogo el "
     "mismo número de turnos con los mismos hablantes en el mismo orden.\n"
     "4. Longitud similar al original: nada de párrafos inflados.\n"
     "5. Todo en español, con el tono cercano y concreto del tutorial (tú, "
     "ejemplos de a pie, cero jerga corporativa)."
 )
+
+# Multiplicadores que cambian la escala de una cifra ("5 mil", "$1.2M")
+_SCALE_RE = re.compile(r"(\d[\d.,]*)\s*(mil(?:lones|lón)?|k|m|mdp)\b", re.IGNORECASE)
 
 
 def _steps_source(steps: list[dict]) -> list[dict]:
@@ -94,25 +102,58 @@ def build_prompt(ctx: dict, steps: list[dict]) -> str:
     )
 
 
+def _canonical(token: str) -> str:
+    """Cifra canónica: quita separadores de millares y puntuación colgante,
+    conservando el punto decimal ('92,000'→'92000'; '1.2'→'1.2'; '5.'→'5')."""
+    token = re.sub(r"(?<=\d),(?=\d{3}\b)", "", token)
+    return token.rstrip(".,")
+
+
 def _numbers(text: str) -> set[str]:
-    """Secuencias de dígitos normalizadas (sin separadores de miles)."""
-    return {m.replace(",", "").replace(".", "")
-            for m in re.findall(r"\d[\d.,]*", text)}
+    return {_canonical(m) for m in re.findall(r"\d[\d.,]*", text)}
 
 
-def _validate_step(source: dict, ctx: dict, step: RewrittenStep) -> dict | None:
+def _scaled_numbers(text: str) -> set[tuple[str, str]]:
+    """Pares (cifra, multiplicador) — '$1.2M' → ('1.2', 'm')."""
+    return {(_canonical(num), scale.lower())
+            for num, scale in _SCALE_RE.findall(text)}
+
+
+def _source_texts(source: dict) -> list[str]:
+    return [source["what"], source["eli5"], source["tip"]] + \
+        [t["text"] for t in source.get("dialogue", [])]
+
+
+def allowed_numbers(sources: list[dict], ctx: dict) -> tuple[set, set]:
+    """Cifras y (cifra, escala) permitidas: SOLO los valores del contenido
+    autorado (todos los pasos, alineado con el system prompt) y del contexto —
+    nunca las claves del JSON (la clave 'eli5' no autoriza el dígito 5)."""
+    texts = [str(v) for v in ctx.values()]
+    for source in sources:
+        texts += _source_texts(source)
+    plain: set[str] = set()
+    scaled: set[tuple[str, str]] = set()
+    for text in texts:
+        plain |= _numbers(text)
+        scaled |= _scaled_numbers(text)
+    return plain, scaled
+
+
+def _validate_step(source: dict, allowed: set, allowed_scaled: set,
+                   step: RewrittenStep) -> dict | None:
     """Aplica el contrato a un paso; None si no lo cumple (se sirve el autorado)."""
-    allowed = _numbers(json.dumps(source, ensure_ascii=False)) \
-        | _numbers(json.dumps(ctx, ensure_ascii=False))
-
-    fields = {"what": step.what, "eli5": step.eli5, "tip": step.tip}
-    for name, text in fields.items():
+    def text_ok(text: str, original: str) -> bool:
         if not text.strip():
-            return None
-        if len(text) > LENGTH_RATIO_MAX * max(len(source[name]), 1):
-            return None
+            return False
+        if len(text) > LENGTH_RATIO_MAX * max(len(original), 1):
+            return False
         if not _numbers(text) <= allowed:
-            return None
+            return False
+        return _scaled_numbers(text) <= allowed_scaled
+
+    if not (text_ok(step.what, source["what"]) and text_ok(step.eli5, source["eli5"])
+            and text_ok(step.tip, source["tip"])):
+        return None
 
     src_dialogue = source.get("dialogue", [])
     if len(step.dialogue) != len(src_dialogue):
@@ -121,9 +162,7 @@ def _validate_step(source: dict, ctx: dict, step: RewrittenStep) -> dict | None:
     for turn, src_turn in zip(step.dialogue, src_dialogue):
         if turn.speaker != src_turn["speaker"]:
             return None
-        if len(turn.text) > LENGTH_RATIO_MAX * max(len(src_turn["text"]), 1):
-            return None
-        if not _numbers(turn.text) <= allowed:
+        if not text_ok(turn.text, src_turn["text"]):
             return None
         dialogue.append({"speaker": turn.speaker, "text": turn.text})
 
@@ -131,58 +170,72 @@ def _validate_step(source: dict, ctx: dict, step: RewrittenStep) -> dict | None:
             "dialogue": dialogue}
 
 
-def get_cached(fp: str) -> dict | None:
+def _fail_count(project_id: str, fp: str) -> int:
+    entry = _failures.get(project_id)
+    return entry[1] if entry and entry[0] == fp else 0
+
+
+def get_cached(project_id: str, fp: str) -> dict | None:
     with _lock:
-        return _cache.get(fp)
+        entry = _cache.get(project_id)
+        return entry[1] if entry and entry[0] == fp else None
 
 
-def status(fp: str) -> str:
+def status(project_id: str, fp: str) -> str:
     """'listo' | 'generando' | 'agotado' (falló MAX_ATTEMPTS veces)."""
     with _lock:
-        if fp in _cache:
+        entry = _cache.get(project_id)
+        if entry and entry[0] == fp:
             return "listo"
-        if _failures.get(fp, 0) >= MAX_ATTEMPTS:
+        if _fail_count(project_id, fp) >= MAX_ATTEMPTS:
             return "agotado"
         return "generando"
 
 
-def should_generate(fp: str) -> bool:
+def should_generate(project_id: str, fp: str) -> bool:
     """Reserva el fingerprint para una generación (evita tareas duplicadas)."""
     with _lock:
-        if fp in _cache or fp in _pending or _failures.get(fp, 0) >= MAX_ATTEMPTS:
+        entry = _cache.get(project_id)
+        if entry and entry[0] == fp:
+            return False
+        if fp in _pending or _fail_count(project_id, fp) >= MAX_ATTEMPTS:
             return False
         _pending.add(fp)
         return True
 
 
-def generate(provider, fp: str, ctx: dict, steps: list[dict]) -> None:
+def generate(provider, project_id: str, fp: str, ctx: dict, steps: list[dict]) -> None:
     """Corre en background: llama al provider, valida por paso y guarda.
 
-    Nunca propaga excepciones (un fallo del LLM jamás debe tumbar nada);
-    los fallos se cuentan y tras MAX_ATTEMPTS se deja de intentar ese estado.
+    Nunca propaga excepciones (un fallo del LLM jamás debe tumbar nada); los
+    fallos se cuentan por proyecto y tras MAX_ATTEMPTS se deja de intentar ese
+    estado. Guardar reemplaza la entrada anterior del proyecto: la caché queda
+    acotada a una entrada por proyecto vivo.
     """
     try:
         parsed = provider.rewrite(SYSTEM_PROMPT, build_prompt(ctx, steps),
                                   RewrittenTutorial)
-        source_by_key = {s["key"]: s for s in _steps_source(steps)}
+        sources = _steps_source(steps)
+        source_by_key = {s["key"]: s for s in sources}
+        allowed, allowed_scaled = allowed_numbers(sources, ctx)
         valid: dict[str, dict] = {}
         if parsed is not None:
             for step in parsed.steps:
                 source = source_by_key.get(step.key)
                 if source is None:
                     continue
-                rendered = _validate_step(source, ctx, step)
+                rendered = _validate_step(source, allowed, allowed_scaled, step)
                 if rendered is not None:
                     valid[step.key] = rendered
         with _lock:
             if valid:
-                _cache[fp] = valid
-                _failures.pop(fp, None)
+                _cache[project_id] = (fp, valid)
+                _failures.pop(project_id, None)
             else:
-                _failures[fp] = _failures.get(fp, 0) + 1
+                _failures[project_id] = (fp, _fail_count(project_id, fp) + 1)
     except Exception:
         with _lock:
-            _failures[fp] = _failures.get(fp, 0) + 1
+            _failures[project_id] = (fp, _fail_count(project_id, fp) + 1)
     finally:
         with _lock:
             _pending.discard(fp)

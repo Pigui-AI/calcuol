@@ -60,6 +60,26 @@ def test_gate_off_without_credentials(monkeypatch):
     assert llm_provider.default_provider() is None
 
 
+def test_number_guard_keeps_decimal_point_and_scales():
+    """'$1.2M' no pasa porque '12' esté permitido; '5 mil' exige la pareja."""
+    source = {"key": "x", "what": "Ventas de $92,000 con churn 0.03 en 12 meses",
+              "eli5": "igual", "tip": "igual", "dialogue": []}
+    allowed, scaled = render.allowed_numbers([source], {"horizonte_meses": 60})
+
+    assert {"92000", "0.03", "12", "60"} <= allowed
+    assert "5" not in allowed            # la clave JSON 'eli5' ya no autoriza el 5
+
+    def check(text):
+        step = render.RewrittenStep(key="x", what=text, eli5="igual",
+                                    tip="igual", dialogue=[])
+        return render._validate_step(source, allowed, scaled, step) is not None
+
+    assert check("Tu changarro vende $92,000 y pierde 0.03 al mes")
+    assert not check("Podrías facturar $1.2M")      # decimal fabricado
+    assert not check("Imagina 12 mil clientes")     # escala fabricada
+    assert not check("Serían $920,000 al año")      # cifra calculada
+
+
 def test_endpoint_off_without_provider(client, monkeypatch):
     monkeypatch.setattr(llm_provider, "default_provider", lambda: None)
     data = client.get("/onboarding").json()

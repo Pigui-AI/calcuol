@@ -30,7 +30,12 @@ class AnthropicProvider:
         self.effort = os.environ.get("TUTORIAL_LLM_EFFORT", "low")
 
     def rewrite(self, system: str, prompt: str, schema):
-        """Devuelve una instancia validada de `schema` o None (refusal/parseo)."""
+        """Devuelve una instancia validada de `schema` o None.
+
+        None ante cualquier final que no sea end_turn: refusal de los
+        clasificadores, truncado por max_tokens (con thinking activo el tope
+        cubre razonamiento + respuesta), etc. El que llama cuenta el fallo.
+        """
         response = self._client.messages.parse(
             model=self.model,
             max_tokens=16000,
@@ -39,20 +44,41 @@ class AnthropicProvider:
             messages=[{"role": "user", "content": prompt}],
             output_format=schema,
         )
-        if response.stop_reason == "refusal":
+        if response.stop_reason != "end_turn":
             return None
         return response.parsed_output
 
 
+def _env_signature() -> tuple:
+    return (
+        os.environ.get("TUTORIAL_LLM", "auto").lower(),
+        bool(os.environ.get("ANTHROPIC_API_KEY")),
+        bool(os.environ.get("ANTHROPIC_AUTH_TOKEN")),
+        os.environ.get("TUTORIAL_LLM_MODEL", DEFAULT_MODEL),
+        os.environ.get("TUTORIAL_LLM_EFFORT", "low"),
+    )
+
+
+# El cliente de Anthropic construye un httpx.Client (SSLContext + certifi) al
+# instanciarse: se memoiza por firma del entorno para no pagar ese costo en
+# cada GET /onboarding.
+_memo: dict = {"sig": None, "provider": None}
+
+
 def default_provider() -> AnthropicProvider | None:
-    """Instancia el provider solo si está habilitado y el SDK está disponible."""
-    mode = os.environ.get("TUTORIAL_LLM", "auto").lower()
-    if mode == "off":
-        return None
-    if mode != "on" and not (os.environ.get("ANTHROPIC_API_KEY")
-                             or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
-        return None
-    try:
-        return AnthropicProvider()
-    except Exception:
-        return None
+    """Provider memoizado; None si está deshabilitado o el SDK no está."""
+    sig = _env_signature()
+    if _memo["sig"] == sig:
+        return _memo["provider"]
+
+    provider = None
+    mode = sig[0]
+    enabled = mode == "on" or (mode != "off" and (sig[1] or sig[2]))
+    if enabled:
+        try:
+            provider = AnthropicProvider()
+        except Exception:
+            provider = None
+    _memo["sig"] = sig
+    _memo["provider"] = provider
+    return provider
