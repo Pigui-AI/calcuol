@@ -36,7 +36,7 @@ function StepIcon({ icon, status }: { icon: string; status: string }) {
 
 function StepDetail({ step, personalized, quizScore, onQuizFinish, onReview, handsOnDone, onToggleHandsOn }: {
   step: OnboardingStep; personalized: boolean; quizScore?: QuizScore;
-  onQuizFinish: (stepKey: string, correct: number, total: number) => void;
+  onQuizFinish: (stepKey: string, correct: number, total: number, ids: string[]) => void;
   onReview: (stepKey: string) => void;
   handsOnDone: number[];
   onToggleHandsOn: (stepKey: string, index: number) => void;
@@ -228,7 +228,7 @@ export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
       return !v;
     });
   };
-  const handleQuizFinish = (stepKey: string, correct: number, total: number) => {
+  const handleQuizFinish = (stepKey: string, correct: number, total: number, ids: string[]) => {
     setQuizScores((prev) => {
       const before = prev[stepKey];
       // best/total viajan en pareja (el toggle de privacidad puede cambiar el
@@ -240,6 +240,7 @@ export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
           best: better ? correct : before.best,
           total: better ? total : before.total,
           passed: (before?.passed ?? false) || (total > 0 && correct === total),
+          ids,
         },
       };
       try { localStorage.setItem(QUIZ_KEY, JSON.stringify(next)); } catch { /* sin storage */ }
@@ -266,6 +267,16 @@ export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
   const pct = Math.round((data.completed / data.total) * 100);
   const detailStep = data.steps.find((s) => s.key === selected) ?? data.steps[0];
   const anyRealData = data.steps.some((s) => s.scene_data);
+
+  // un score solo cuenta si sus preguntas siguen existiendo en el quiz actual
+  // del paso: si el contenido cambió, «entendido» debe ganarse de nuevo
+  const validScores: Record<string, QuizScore> = {};
+  data.steps.forEach((step) => {
+    const score = quizScores[step.key];
+    if (!score?.ids?.length) return;
+    const current = new Set((step.quiz ?? []).map((q) => q.id));
+    if (score.ids.every((id) => current.has(id))) validScores[step.key] = score;
+  });
 
   return (
     <div className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -308,7 +319,7 @@ export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
         <div className="h-full rounded-full bg-pigui-600 transition-all" style={{ width: `${pct}%` }} />
       </div>
 
-      <NextActionBanner data={data} quizScores={quizScores} onReview={reviewStep} />
+      <NextActionBanner data={data} quizScores={validScores} onReview={reviewStep} />
 
       <div className="mt-5 flex items-center justify-between gap-2">
         <div className="flex rounded-lg border border-slate-200 bg-white p-0.5">
@@ -327,7 +338,7 @@ export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
 
       {view === "mapa" ? (
         <div className="mt-3">
-          <ConceptMap steps={data.steps} quizScores={quizScores} onSelect={reviewStep} />
+          <ConceptMap steps={data.steps} quizScores={validScores} onSelect={reviewStep} />
         </div>
       ) : (
       <div className="mt-3 overflow-x-auto pb-1">
@@ -348,7 +359,7 @@ export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
                   <span className={`text-xs font-medium leading-tight ${
                     isSelected ? "text-pigui-700" : "text-slate-700"}`}>{step.short}</span>
                   <span className={`text-[11px] ${meta.text}`}>{meta.label}</span>
-                  {quizScores[step.key]?.passed && (
+                  {validScores[step.key]?.passed && (
                     <span className="text-[10px] font-medium text-emerald-600"
                       title="Aprobaste el quiz de este paso: hecho Y entendido">🎯 entendido</span>
                   )}
@@ -368,7 +379,7 @@ export default function RoadmapTutorial({ projectId }: { projectId?: string }) {
         <div className="mt-5 border-t border-slate-100 pt-5">
           <div className="grid gap-3 lg:grid-cols-2">
             <StepDetail step={detailStep} personalized={personalized}
-              quizScore={quizScores[detailStep.key]}
+              quizScore={validScores[detailStep.key]}
               onQuizFinish={handleQuizFinish} onReview={reviewStep}
               handsOnDone={handsOn[detailStep.key] ?? []}
               onToggleHandsOn={toggleHandsOn} />

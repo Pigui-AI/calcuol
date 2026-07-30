@@ -7,14 +7,19 @@
 import { useEffect, useState } from "react";
 import { QuizQuestion } from "@/lib/api";
 
-export interface QuizScore { best: number; total: number; passed: boolean }
+export interface QuizScore {
+  best: number; total: number; passed: boolean;
+  /** ids de las preguntas respondidas: si el contenido del quiz cambia, el
+   *  score viejo deja de contar como «entendido» */
+  ids?: string[];
+}
 
 export default function StepQuiz({ stepKey, questions, personalized, score, onFinish, onReview }: {
   stepKey: string;
   questions: QuizQuestion[];
   personalized: boolean;
   score?: QuizScore;
-  onFinish: (stepKey: string, correct: number, total: number) => void;
+  onFinish: (stepKey: string, correct: number, total: number, ids: string[]) => void;
   onReview: (stepKey: string) => void;
 }) {
   const [idx, setIdx] = useState(0);
@@ -39,7 +44,7 @@ export default function StepQuiz({ stepKey, questions, personalized, score, onFi
 
   const finish = () => {
     setFinished(true);
-    onFinish(stepKey, correctCount, visible.length);
+    onFinish(stepKey, correctCount, visible.length, visible.map((qq) => qq.id));
   };
   const retry = () => { setIdx(0); setPicked({}); setFinished(false); };
 

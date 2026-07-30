@@ -247,7 +247,7 @@ function SceneEntregable({ d }: SceneProps) {
             ))}
           </div>
           <p className="a-fade mt-1 font-mono text-[8px] text-slate-400" style={D(2.1)}>
-            11 hojas · {d?.horizon_label ?? "60 meses"}</p>
+            14 hojas · {d?.horizon_label ?? "60 meses"}</p>
         </div>
         <div className="a-slide-up w-28 rounded-lg border border-slate-200 bg-white p-2 shadow-sm" style={D(1.0)}>
           <p className="text-[9px] font-semibold text-pigui-700">📄 Documento</p>

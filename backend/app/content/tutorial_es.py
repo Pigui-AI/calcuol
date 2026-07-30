@@ -7,11 +7,11 @@ apunta cada href) vive en app/routers/onboarding.py; aquí solo hay contenido,
 para que al cambiar el motor el texto y el quiz de un paso se revisen en el
 mismo diff.
 
-Reglas del quiz: cada distractor nombra el malentendido típico en su
-feedback; si el repaso corresponde a OTRO paso, la opción lleva review_step.
-Las preguntas numéricas usan la utilería del tutorial; cuando el proyecto
-tiene datos reales, el router las sustituye por variantes calculadas
-server-side con engine/money (el quiz nunca calcula en el navegador).
+Reglas del quiz: enseña a USAR la herramienta (dónde está cada cosa, qué hace
+el motor, qué significa lo que se ve en pantalla), nunca aritmética. Cada
+distractor nombra el malentendido típico en su feedback; si el repaso
+corresponde a OTRO paso, la opción lleva review_step. Toda afirmación debe
+ser fiel a las reglas reales del motor: al cambiar el motor, revisar aquí.
 """
 
 STEPS = [
@@ -251,9 +251,10 @@ STEPS = [
         "tip": "Casi todos estos motores nacen apagados: mientras no los enciendas no afectan "
                "tus resultados, así que puedes incorporarlos de uno en uno.",
         "eli5": "Aquí viven los motores extra: campañas, suscripciones, tokens de IA, "
-                "costos y contrataciones. Todos vienen apagados, como los focos de una "
-                "casa: enciendes uno, miras qué cambia y, si no te gusta, lo apagas. Nada "
-                "se rompe por probar.",
+                "costos y contrataciones. Campañas, suscripciones y tokens vienen "
+                "apagados, como los focos de una casa: enciendes uno, miras qué cambia "
+                "y, si no te gusta, lo apagas. Ojo: los costos y el equipo sí cuentan "
+                "desde que los creas; para sacarlos, los archivas.",
         "hands_on": ["Entra a «Campañas y recompensas» y pulsa «+ Nueva campaña»",
                      "Dale una ventana de meses y un empujón de conversión (0.15 = 15%)",
                      "Enciende el interruptor maestro del motor de campañas",
@@ -292,11 +293,11 @@ STEPS = [
         ],
         "dialogue": [
             {"speaker": "alumno", "text": "Creé una campaña pero los resultados no cambian nada."},
-            {"speaker": "mentor", "text": "¿Encendiste el interruptor maestro del motor de campañas? Todos los motores extra nacen apagados."},
+            {"speaker": "mentor", "text": "¿Encendiste el interruptor maestro del motor de campañas? Campañas, suscripciones y tokens nacen apagados hasta que activas su interruptor."},
             {"speaker": "alumno", "text": "¿Apagados? ¿Y eso por qué?"},
             {"speaker": "mentor", "text": "Para que configures con calma. Enciendes uno, simulas y miras qué cambió. Si no te convence, lo apagas y nada se rompe."},
-            {"speaker": "alumno", "text": "¿Los enciendo todos de una vez para ver el escenario completo?"},
-            {"speaker": "mentor", "text": "Mejor de uno en uno: así sabes exactamente qué motor causó qué cambio en los números."},
+            {"speaker": "alumno", "text": "¿Y los costos y las contrataciones también tienen interruptor?"},
+            {"speaker": "mentor", "text": "No: esos cuentan desde que los creas — la nómina entra completa desde su mes de inicio. Si quieres sacar uno de la simulación, lo archivas."},
         ],
     },
     {
@@ -417,7 +418,7 @@ STEPS = [
     {
         "key": "entregable", "title": "Exportar el plan",
         "short": "Exportar", "icon": "download",
-        "what": "Desde los resultados generas el business plan en Excel (once hojas, sesenta "
+        "what": "Desde los resultados generas el business plan en Excel (catorce hojas, sesenta "
                 "meses) o el documento ejecutivo listo para presentar.",
         "tip": "Ambos entregables citan la corrida que los originó, para que ningún número "
                "circule sin saber de dónde salió.",
@@ -463,7 +464,7 @@ STEPS = [
         ],
         "dialogue": [
             {"speaker": "alumno", "text": "Necesito mandarle el plan al inversionista. ¿Copio los números a mano?"},
-            {"speaker": "mentor", "text": "No: desde los resultados exportas el Excel de once hojas o el documento ejecutivo. Los dos citan el run que los originó."},
+            {"speaker": "mentor", "text": "No: desde los resultados exportas el Excel completo, hoja por hoja, o el documento ejecutivo. Los dos citan el run que los originó."},
             {"speaker": "alumno", "text": "¿Y esa cita para qué es?"},
             {"speaker": "mentor", "text": "Para que cuando pregunten «¿de dónde salió este número?» siempre haya respuesta: del run citado, reproducible con su snapshot."},
             {"speaker": "alumno", "text": "¿Lo puedo imprimir para la reunión?"},
