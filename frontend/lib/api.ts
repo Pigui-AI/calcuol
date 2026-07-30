@@ -279,6 +279,11 @@ export interface QuizQuestion {
 }
 /** Turno del diálogo mentor-alumno (guion autorado en el backend). */
 export interface DialogueTurn { speaker: "alumno" | "mentor"; text: string; }
+/** Re-redacción opcional por LLM, adaptada al negocio del usuario y validada
+ *  server-side contra el contenido autorado. El quiz nunca se re-redacta. */
+export interface RewrittenStep {
+  what?: string; eli5?: string; tip?: string; dialogue?: DialogueTurn[];
+}
 export interface OnboardingStep {
   key: string; order: number; title: string; short: string; icon: string;
   status: "completado" | "en_progreso" | "pendiente";
@@ -288,12 +293,15 @@ export interface OnboardingStep {
   scene_data?: TutorialSceneData | null;
   quiz?: QuizQuestion[];
   dialogue?: DialogueTurn[];
+  rewritten?: RewrittenStep | null;
 }
 export interface OnboardingRoadmap {
   project: { id: string; name: string } | null;
   steps: OnboardingStep[];
   completed: number; total: number; current_key: string | null;
   imports_committed: number;
+  /** off | generando | listo | agotado — estado de la re-redacción por LLM */
+  rewrite_status?: string;
 }
 
 export interface HiringRoleT {

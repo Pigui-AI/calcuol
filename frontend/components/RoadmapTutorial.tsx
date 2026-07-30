@@ -42,6 +42,9 @@ function StepDetail({ step, personalized, quizScore, onQuizFinish, onReview, han
   onToggleHandsOn: (stepKey: string, index: number) => void;
 }) {
   const meta = STATUS_META[step.status] ?? STATUS_META.pendiente;
+  // re-redacción por LLM adaptada al negocio: opcional, validada server-side,
+  // y apagable con el mismo toggle de privacidad que las escenas
+  const rewritten = personalized ? step.rewritten ?? undefined : undefined;
   return (
     <div className={`rounded-lg border p-4 ${step.status === "en_progreso"
       ? "border-pigui-300 bg-pigui-50/60" : "border-slate-200 bg-white"}`}>
@@ -52,9 +55,17 @@ function StepDetail({ step, personalized, quizScore, onQuizFinish, onReview, han
           </p>
           <p className="font-semibold text-slate-900">{step.title}</p>
         </div>
-        <span className={`shrink-0 text-xs font-medium ${meta.text}`}>{meta.label}</span>
+        <span className="flex shrink-0 items-center gap-1.5">
+          {rewritten && (
+            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700"
+              title="Texto adaptado a tu negocio por IA; los datos y reglas vienen del motor">
+              ✍️ adaptado a tu negocio
+            </span>
+          )}
+          <span className={`text-xs font-medium ${meta.text}`}>{meta.label}</span>
+        </span>
       </div>
-      <p className="mt-2 text-sm leading-relaxed text-slate-600">{step.what}</p>
+      <p className="mt-2 text-sm leading-relaxed text-slate-600">{rewritten?.what ?? step.what}</p>
 
       <div className="mt-3">
         <TutorialScene stepKey={step.key} data={personalized ? step.scene_data ?? undefined : undefined} />
@@ -64,11 +75,11 @@ function StepDetail({ step, personalized, quizScore, onQuizFinish, onReview, han
         <p className="text-[11px] font-semibold uppercase tracking-wide text-sky-700">
           🧒 Explicado fácil
         </p>
-        <p className="mt-0.5 text-xs leading-relaxed text-slate-700">{step.eli5}</p>
+        <p className="mt-0.5 text-xs leading-relaxed text-slate-700">{rewritten?.eli5 ?? step.eli5}</p>
       </div>
 
       {(step.dialogue?.length ?? 0) > 0 && (
-        <DialogueLesson stepKey={step.key} turns={step.dialogue!} />
+        <DialogueLesson stepKey={step.key} turns={rewritten?.dialogue ?? step.dialogue!} />
       )}
 
       {step.hands_on.length > 0 && (
@@ -109,7 +120,7 @@ function StepDetail({ step, personalized, quizScore, onQuizFinish, onReview, han
       )}
 
       <p className="mt-2 rounded-md bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-600">
-        <span className="font-semibold text-slate-700">Para tenerlo en cuenta: </span>{step.tip}
+        <span className="font-semibold text-slate-700">Para tenerlo en cuenta: </span>{rewritten?.tip ?? step.tip}
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <Button href={step.href} variant={step.status === "completado" ? "secondary" : "primary"}

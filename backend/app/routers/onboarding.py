@@ -9,10 +9,12 @@ app/content/tutorial_es.py; aquí solo se calcula el estado y los enlaces.
 """
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import select, func, or_, and_
 from sqlalchemy.orm import Session
 
+from app.content import llm_provider as tutorial_llm
+from app.content import render
 from app.content.tutorial_es import STEPS as CONTENT
 from app.database import get_db
 from app.engine.money import D
@@ -70,6 +72,21 @@ def _first_client(db: Session, pid: str) -> Client | None:
         select(Client).where(Client.project_id == pid, Client.status != "archived")
         .order_by(Client.created_at)
     ).scalars().first()
+
+
+def _rewrite_context(db: Session, project: Project) -> dict:
+    """Datos mínimos para que el LLM adapte registro y ejemplos: nombres y
+    giro del negocio. Sin métricas — el LLM redacta, no calcula."""
+    ctx = {
+        "proyecto": project.name,
+        "moneda": project.base_currency,
+        "horizonte_meses": project.horizon_months,
+    }
+    client = _first_client(db, project.id)
+    if client:
+        ctx["cliente"] = client.trade_name
+        ctx["giro"] = client.industry
+    return ctx
 
 
 def _latest_override(db: Session, pid: str, key: str,
@@ -314,7 +331,8 @@ def _steps(db: Session, project: Project | None) -> list:
 
 
 @router.get("/onboarding")
-def get_onboarding(project_id: str | None = None, db: Session = Depends(get_db)):
+def get_onboarding(background_tasks: BackgroundTasks, project_id: str | None = None,
+                   db: Session = Depends(get_db)):
     """Estado del roadmap. Sin project_id usa el proyecto más reciente."""
     if project_id:
         project = db.get(Project, project_id)
@@ -326,6 +344,26 @@ def get_onboarding(project_id: str | None = None, db: Session = Depends(get_db))
 
     steps, extra = _steps(db, project)
     scenes = _scene_data(db, project, extra["scenario_ids"], extra["first_scenario_id"])
+
+    # Re-redacción opcional con LLM (F6): si hay provider configurado, la
+    # versión adaptada al negocio se genera en background y se sirve desde
+    # caché cuando está lista. El endpoint nunca espera al modelo.
+    rewrite_status = "off"
+    rewritten: dict = {}
+    provider = tutorial_llm.default_provider()
+    if provider is not None and project is not None:
+        ctx = _rewrite_context(db, project)
+        fp = render.fingerprint(project.id, ctx, steps, provider.model)
+        cached = render.get_cached(fp)
+        if cached is not None:
+            rewritten = cached
+            rewrite_status = "listo"
+        else:
+            if render.should_generate(fp):
+                background_tasks.add_task(render.generate, provider, fp, ctx,
+                                          [dict(s) for s in steps])
+            rewrite_status = render.status(fp)
+
     # el primer paso no cumplido es el que está en curso; el resto queda pendiente
     current = next((s for s in steps if not s["done"]), None)
     for step in steps:
@@ -339,6 +377,8 @@ def get_onboarding(project_id: str | None = None, db: Session = Depends(get_db))
         step["scene_data"] = scenes.get(step["key"])
         # el quiz enseña a usar la herramienta; hoy todo es contenido autorado
         step["quiz"] = [{**q, "uses_real_data": False} for q in step.get("quiz", [])]
+        # el quiz nunca se re-redacta: sus afirmaciones están verificadas a mano
+        step["rewritten"] = rewritten.get(step["key"])
 
     completed = sum(1 for s in steps if s["status"] == "completado")
     return {
@@ -348,4 +388,5 @@ def get_onboarding(project_id: str | None = None, db: Session = Depends(get_db))
         "total": len(steps),
         "current_key": current["key"] if current else None,
         "imports_committed": extra["imports"],
+        "rewrite_status": rewrite_status,
     }
