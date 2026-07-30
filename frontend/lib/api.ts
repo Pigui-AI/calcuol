@@ -251,17 +251,57 @@ export interface ConclusionsResponse {
 }
 
 // ---------- roadmap de activación (tutorial guiado) ----------
+/** Datos reales del proyecto para una escena, ya formateados y truncados por
+ *  el servidor. Todos opcionales: cada escena cae a su utilería por dato. */
+export interface TutorialSceneData {
+  is_real: boolean;
+  project_name?: string; currency?: string; horizon_label?: string;
+  client_name?: string; branches?: string[];
+  products?: { name: string; price: string }[];
+  baseline_line?: string;
+  old_value?: string; new_value?: string; v_old_label?: string; v_new_label?: string;
+  capacity_label?: string;
+  campaign_name?: string; campaign_window?: string;
+  campaign_start?: number; campaign_end?: number;
+  hash_short?: string;
+  top_lever?: string;
+  run_ref?: string;
+}
+/** Opción del quiz «Compruébalo»: el feedback de cada distractor nombra el
+ *  malentendido; review_step apunta al paso que conviene repasar. */
+export interface QuizOption {
+  text: string; correct: boolean; feedback: string; review_step?: string;
+}
+export interface QuizQuestion {
+  id: string; text: string; options: QuizOption[];
+  /** true cuando la pregunta usa números reales del proyecto (calculados server-side) */
+  uses_real_data: boolean;
+}
+/** Turno del diálogo mentor-alumno (guion autorado en el backend). */
+export interface DialogueTurn { speaker: "alumno" | "mentor"; text: string; }
+/** Re-redacción opcional por LLM, adaptada al negocio del usuario y validada
+ *  server-side contra el contenido autorado. El quiz nunca se re-redacta. */
+export interface RewrittenStep {
+  what?: string; eli5?: string; tip?: string; dialogue?: DialogueTurn[];
+}
 export interface OnboardingStep {
   key: string; order: number; title: string; short: string; icon: string;
   status: "completado" | "en_progreso" | "pendiente";
   detail: string | null; href: string; what: string; tip: string;
   eli5: string; hands_on: string[];
+  /** opcionales: el backend puede ser más viejo que el frontend */
+  scene_data?: TutorialSceneData | null;
+  quiz?: QuizQuestion[];
+  dialogue?: DialogueTurn[];
+  rewritten?: RewrittenStep | null;
 }
 export interface OnboardingRoadmap {
   project: { id: string; name: string } | null;
   steps: OnboardingStep[];
   completed: number; total: number; current_key: string | null;
   imports_committed: number;
+  /** off | generando | listo | agotado — estado de la re-redacción por LLM */
+  rewrite_status?: string;
 }
 
 export interface HiringRoleT {

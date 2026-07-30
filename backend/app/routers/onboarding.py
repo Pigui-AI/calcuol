@@ -3,12 +3,21 @@
 Devuelve los pasos del tutorial con su estado REAL calculado en el servidor
 (qué ya hizo el usuario en el proyecto), nunca inferido en el navegador. Cada
 paso apunta a la pantalla donde se completa y explica qué se aprende ahí.
+
+El contenido autorado (what/tip/eli5/hands_on) vive en
+app/content/tutorial_es.py; aquí solo se calcula el estado y los enlaces.
 """
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func
+from decimal import Decimal
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from sqlalchemy import select, func, or_, and_
 from sqlalchemy.orm import Session
 
+from app.content import llm_provider as tutorial_llm
+from app.content import render
+from app.content.tutorial_es import STEPS as CONTENT
 from app.database import get_db
+from app.engine.money import D
 from app.models import (Project, Scenario, Client, AssumptionSet, SimulationRun,
                         Campaign, SubscriptionPlan, HiringRole, SensitivityAnalysis,
                         ExecutiveConclusion, ExportJob, ImportJob)
@@ -18,6 +27,207 @@ router = APIRouter()
 # Claves cuya presencia como override indica que el usuario modeló el crecimiento
 GROWTH_PREFIXES = ("b2b.curve.", "b2b.churn_rate", "b2b.cac", "b2b.acquisition",
                    "b2b.onboarding", "b2c.cohort.", "b2c.consumer_churn")
+
+# Nombre corto de cada palanca para el tornado de la escena de análisis
+LEVER_LABELS = {
+    "b2b.churn_rate": "churn", "b2b.cac": "CAC", "b2b.curve.rate": "curva",
+    "b2b.curve.max_clients": "techo", "b2c.avg_ticket": "ticket",
+    "b2c.purchase_conversion": "conversión", "b2c.purchase_frequency": "frecuencia",
+    "b2c.consumer_churn_rate": "churn B2C", "revenue.commission.pigui_pct": "comisión",
+    "payments.stripe_share": "ruta Stripe",
+}
+
+
+def _trunc(text: str, limit: int) -> str:
+    """Recorta para no romper los anchos fijos de las escenas (w-56/w-64)."""
+    text = (text or "").strip()
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _fmt_money(value) -> str:
+    """Monto compacto para utilería visual: $45, $92,000, $1.2M."""
+    d = D(value)
+    if abs(d) >= Decimal("1000000"):
+        compact = (d / Decimal("1000000")).quantize(Decimal("0.1"))
+        text = f"${compact}M"
+        return text.replace(".0M", "M")
+    return f"${d.quantize(Decimal('1')):,}"
+
+
+def _fmt_int(value) -> str:
+    return f"{int(D(value)):,}"
+
+
+def _num(value) -> Decimal | None:
+    """Decimal finito o None: la BD puede traer 'NaN'/'Infinity' vía la API."""
+    try:
+        d = D(value)
+    except Exception:
+        return None
+    return d if d.is_finite() else None
+
+
+def _first_client(db: Session, pid: str) -> Client | None:
+    return db.execute(
+        select(Client).where(Client.project_id == pid, Client.status != "archived")
+        .order_by(Client.created_at)
+    ).scalars().first()
+
+
+def _rewrite_context(db: Session, project: Project) -> dict:
+    """Datos mínimos para que el LLM adapte registro y ejemplos: nombres y
+    giro del negocio. Sin métricas — el LLM redacta, no calcula."""
+    ctx = {
+        "proyecto": project.name,
+        "moneda": project.base_currency,
+        "horizonte_meses": project.horizon_months,
+    }
+    client = _first_client(db, project.id)
+    if client:
+        ctx["cliente"] = client.trade_name
+        ctx["giro"] = client.industry
+    return ctx
+
+
+def _latest_override(db: Session, pid: str, key: str,
+                     scenario_id: str | None) -> list[AssumptionSet]:
+    """Historial (viejo → vigente) de un supuesto: nivel proyecto y el
+    escenario dado (el mismo al que apuntan los enlaces del tutorial).
+
+    Los overrides de OTROS escenarios (p. ej. Conservador/Optimista creados
+    por el wizard) se excluyen. El orden respeta la jerarquía de resolución
+    (proyecto → escenario) con la versión dentro de cada alcance: el último
+    elemento es el valor vigente aunque el override global sea más reciente.
+    """
+    scopes = (AssumptionSet.scope_type == "global") & AssumptionSet.scenario_id.is_(None)
+    if scenario_id:
+        scopes = or_(scopes, and_(AssumptionSet.scope_type == "scenario",
+                                  AssumptionSet.scenario_id == scenario_id))
+    return db.execute(
+        select(AssumptionSet)
+        .where(AssumptionSet.project_id == pid, AssumptionSet.key == key, scopes)
+        .order_by(AssumptionSet.scope_type == "scenario",
+                  AssumptionSet.version, AssumptionSet.created_at)
+    ).scalars().all()
+
+
+def _scene_data(db: Session, project: Project | None, scenario_ids: list[str],
+                scenario_id: str | None) -> dict:
+    """Datos reales del proyecto para las escenas, ya formateados y truncados.
+
+    Cada escena tiene su variante de utilería en el frontend; aquí solo se
+    devuelven las claves que existen de verdad (fallback por dato, no por
+    paso). Nunca se calcula nada nuevo: se reusa lo que la BD ya conoce.
+    scenario_id es el primer escenario del proyecto — el mismo al que apuntan
+    los enlaces del tutorial.
+    """
+    if not project:
+        return {}
+    pid = project.id
+    scenes: dict[str, dict] = {}
+
+    scenes["proyecto"] = {
+        "is_real": True,
+        "project_name": _trunc(project.name, 18),
+        "currency": project.base_currency,
+        "horizon_label": f"{project.horizon_months} meses",
+    }
+
+    client = _first_client(db, pid)
+    if client:
+        branches = [b for brand in client.brands for b in brand.branches][:2]
+        products = [item for b in branches for item in b.catalog_items
+                    if _num(item.sale_price) is not None][:3]
+        data = {
+            "is_real": True,
+            "client_name": _trunc(client.trade_name, 18),
+        }
+        if branches:
+            data["branches"] = [_trunc(b.name, 10) for b in branches]
+        if products:
+            data["products"] = [{"name": _trunc(p.name, 14), "price": _fmt_money(p.sale_price)}
+                                for p in products]
+        base = client.baseline
+        if base:
+            sales = _num(base.avg_monthly_sales)
+            tx = _num(base.avg_monthly_transactions)
+            consumers = _num(base.active_consumers)
+            if sales is not None and sales > 0 and tx is not None and consumers is not None:
+                data["baseline_line"] = (
+                    f"Línea base: ventas {_fmt_money(sales)} · "
+                    f"{_fmt_int(tx)} tickets · "
+                    f"{_fmt_int(consumers)} consumidores")
+        scenes["clientes"] = data
+
+    churn_rows = _latest_override(db, pid, "b2b.churn_rate", scenario_id)
+    if churn_rows:
+        current = churn_rows[-1]
+        previous = churn_rows[-2] if len(churn_rows) > 1 else None
+        old_value = previous.value if previous else "0.03"
+        old_label = (f"v{previous.version} · {_trunc(previous.value, 8)} · guardada"
+                     if previous else "default · 0.03 · motor")
+        scenes["supuestos"] = {
+            "is_real": True,
+            "old_value": _trunc(old_value, 8),
+            "new_value": _trunc(current.value, 8),
+            "v_old_label": old_label,
+            "v_new_label": f"v{current.version} · {_trunc(current.value, 8)} · vigente ✓",
+        }
+
+    capacity_rows = _latest_override(db, pid, "b2b.onboarding_capacity_monthly", scenario_id)
+    if capacity_rows:
+        scenes["crecimiento"] = {
+            "is_real": True,
+            "capacity_label": f"capacidad del equipo ({_trunc(capacity_rows[-1].value, 6)}/mes)",
+        }
+
+    campaign = db.execute(
+        select(Campaign).where(Campaign.project_id == pid, Campaign.status != "archived")
+        .order_by(Campaign.created_at)
+    ).scalars().first()
+    if campaign:
+        scenes["operaciones"] = {
+            "is_real": True,
+            "campaign_name": f"«{_trunc(campaign.name, 12)}»",
+            "campaign_window": f"meses {campaign.start_month}–{campaign.end_month}",
+            "campaign_start": campaign.start_month,
+            "campaign_end": campaign.end_month,
+        }
+
+    run = None
+    if scenario_ids:
+        run = db.execute(
+            select(SimulationRun).where(SimulationRun.scenario_id.in_(scenario_ids),
+                                        SimulationRun.status == "succeeded")
+            .order_by(SimulationRun.created_at.desc())
+        ).scalars().first()
+    if run:
+        hash_short = f"{run.input_hash[:6]}…"
+        scenes["simulacion"] = {"is_real": True, "hash_short": hash_short}
+        scenes["entregable"] = {
+            "is_real": True,
+            "horizon_label": f"{run.horizon_months} meses",
+            "run_ref": f"run {run.input_hash[:6]} citado",
+        }
+
+    analysis = db.execute(
+        select(SensitivityAnalysis).where(SensitivityAnalysis.project_id == pid)
+        .order_by(SensitivityAnalysis.created_at.desc())
+    ).scalars().first()
+    if analysis and isinstance(analysis.results, list) and analysis.results:
+        def impact_of(row):
+            try:
+                return abs(D(row.get("impact") or 0))
+            except Exception:
+                return Decimal("0")
+        top = max(analysis.results, key=impact_of)
+        key = top.get("key", "")
+        scenes["analisis"] = {
+            "is_real": True,
+            "top_lever": LEVER_LABELS.get(key, _trunc(key.split(".")[-1], 10)),
+        }
+
+    return scenes
 
 
 def _steps(db: Session, project: Project | None) -> list:
@@ -47,6 +257,7 @@ def _steps(db: Session, project: Project | None) -> list:
                   + count(SubscriptionPlan, SubscriptionPlan.project_id == pid)
                   + count(HiringRole, HiringRole.project_id == pid))
     runs_ok = 0
+    scenario_ids: list[str] = []
     if scenario_id:
         scenario_ids = db.execute(select(Scenario.id).where(Scenario.project_id == pid)).scalars().all()
         runs_ok = db.execute(select(func.count()).select_from(SimulationRun).where(
@@ -69,173 +280,59 @@ def _steps(db: Session, project: Project | None) -> list:
     q = f"?project={pid}" if pid else ""
     qs = f"?project={pid}&scenario={scenario_id}" if scenario_id else q
 
-    return [
-        {
-            "key": "proyecto", "title": "Crear tu proyecto",
-            "short": "Proyecto", "icon": "folder",
+    # Señal de cumplimiento, detalle y destino de cada paso (el texto vive en CONTENT)
+    dynamic = {
+        "proyecto": {
             "done": project is not None,
             "detail": project.name if project else None,
             "href": "/projects/new/",
-            "what": "Defines el horizonte (12, 36 o 60 meses), la moneda y la base de partida. "
-                    "El asistente te lleva por la base inicial, el crecimiento y el modelo de ingresos.",
-            "tip": "Empieza con 60 meses: siempre puedes mirar solo el primer año, pero no puedes "
-                   "extender un horizonte ya simulado sin volver a correr.",
-            "eli5": "Un proyecto es como una maqueta de tu negocio. Le dices cuántos "
-                    "meses quieres imaginar (12, 36 o 60), en qué moneda juegas y con qué "
-                    "empiezas. Nada es definitivo: es tu tablero para probar ideas.",
-            "hands_on": ["Pulsa «+ Nuevo proyecto» arriba a la derecha",
-                         "Escribe un nombre y elige la moneda",
-                         "Elige el horizonte: 60 meses te deja ver más lejos",
-                         "Avanza con «Guardar y continuar» y al final pulsa «Crear proyecto»"],
         },
-        {
-            "key": "clientes", "title": "Cargar clientes B2B",
-            "short": "Clientes", "icon": "store",
+        "clientes": {
             "done": clients > 0,
             "detail": f"{clients} cliente(s) en el portafolio" if clients else None,
             "href": f"/clients/{q}" if pid else "/",
-            "what": "Cada negocio se captura con sus sucursales, su catálogo y su línea base "
-                    "financiera (ventas, transacciones, ticket, margen y consumidores).",
-            "tip": "Con línea base real el motor deriva ticket, margen, frecuencia y conversión de "
-                   "tus propios datos en vez de usar supuestos genéricos. Es lo que más mejora la "
-                   "calidad de la simulación.",
-            "eli5": "Cada cliente es una tiendita con sus sucursales y su menú de "
-                    "productos. La línea base son sus números de un mes normal: cuánto vende, "
-                    "cuántos tickets hace y cuánta gente le compra. Con eso el motor aprende "
-                    "cómo se comporta una tienda de verdad.",
-            "hands_on": ["Entra a «Clientes B2B» y pulsa «+ Cliente»",
-                         "Llena el nombre del negocio y su giro",
-                         "Agrega al menos una sucursal con su dirección",
-                         "Captura 3 o 4 productos con su precio y su costo",
-                         "En la línea base escribe ventas, tickets y consumidores de un mes típico",
-                         "Revisa y pulsa «Crear cliente B2B»"],
         },
-        {
-            "key": "supuestos", "title": "Ajustar los supuestos",
-            "short": "Supuestos", "icon": "sliders",
+        "supuestos": {
             "done": overrides > 0,
             "detail": f"{overrides} supuesto(s) declarados" if overrides else None,
             "href": f"/assumptions/{qs}" if scenario_id else "/",
-            "what": "El centro de supuestos reúne todas las variables del escenario con su valor "
-                    "efectivo y su origen: default del motor, valor del proyecto o del escenario.",
-            "tip": "Nada se sobrescribe: cada edición crea una versión nueva con autor y fecha, así "
-                   "que puedes experimentar sin miedo a perder el valor anterior.",
-            "eli5": "Un supuesto es un número que tú decides mientras no tengas el dato "
-                    "real: «cada mes se me va el 3% de los clientes». Cambiarlo es como guardar "
-                    "una partida nueva en un videojuego: la anterior no se borra, por si "
-                    "quieres regresar.",
-            "hands_on": ["Abre tu proyecto y entra a «Supuestos» del escenario Base",
-                         "Busca b2b.churn_rate y cámbialo (por ejemplo de 0.03 a 0.05)",
-                         "El borde morado significa «cambio sin guardar»",
-                         "Pulsa «Guardar cambios»: el origen ahora dirá «escenario» y quedará una versión nueva"],
         },
-        {
-            "key": "crecimiento", "title": "Modelar el crecimiento",
-            "short": "Crecimiento", "icon": "trending",
+        "crecimiento": {
             "done": growth_overrides > 0,
             "detail": f"{growth_overrides} palanca(s) de crecimiento ajustadas" if growth_overrides else None,
             "href": f"/growth-b2b/{qs}" if scenario_id else "/",
-            "what": "Curva de adquisición (lineal, exponencial, logística o desacelerada), churn, "
-                    "CAC, presupuesto y capacidad de onboarding. En Cohortes modelas la retención "
-                    "de consumidores por antigüedad en vez de un churn plano.",
-            "tip": "Mira la columna «restricción activa»: te dice mes a mes si el freno fue la "
-                   "curva, el presupuesto o la capacidad de onboarding.",
-            "eli5": "La curva dice cuántos clientes te gustaría tener cada mes. Pero "
-                    "querer no es poder: si tu presupuesto o tu equipo solo alcanzan para 8 "
-                    "altas, el motor te da 8 y te dice quién puso el freno. Es como invitar a "
-                    "20 amigos cuando en el coche solo caben 8.",
-            "hands_on": ["Entra a «Adquisición B2B»",
-                         "Prueba otra curva (la logística es la más realista)",
-                         "Baja la capacidad de onboarding a 5 y guarda",
-                         "Mira la tabla: la columna «restricción activa» dirá «capacidad_onboarding»",
-                         "Visita «Cohortes» para ver cuánta gente sigue activa mes a mes"],
         },
-        {
-            "key": "operaciones", "title": "Configurar operaciones",
-            "short": "Operaciones", "icon": "gear",
+        "operaciones": {
             "done": operations > 0,
             "detail": f"{operations} elemento(s) configurados" if operations else None,
             "href": f"/campaigns/{qs}" if scenario_id else "/",
-            "what": "Campañas y recompensas, transacciones y rutas de pago, planes de suscripción, "
-                    "consumo de IA, costos escalonados y el plan de contratación.",
-            "tip": "Casi todos estos motores nacen apagados: mientras no los enciendas no afectan "
-                   "tus resultados, así que puedes incorporarlos de uno en uno.",
-            "eli5": "Aquí viven los motores extra: campañas, suscripciones, tokens de IA, "
-                    "costos y contrataciones. Todos vienen apagados, como los focos de una "
-                    "casa: enciendes uno, miras qué cambia y, si no te gusta, lo apagas. Nada "
-                    "se rompe por probar.",
-            "hands_on": ["Entra a «Campañas y recompensas» y pulsa «+ Nueva campaña»",
-                         "Dale una ventana de meses y un empujón de conversión (0.15 = 15%)",
-                         "Enciende el interruptor maestro del motor de campañas",
-                         "Opcional: crea un plan en «Suscripciones» y un rol en «Equipo e hiring»"],
         },
-        {
-            "key": "simulacion", "title": "Ejecutar la simulación",
-            "short": "Simular", "icon": "play",
+        "simulacion": {
             "done": runs_ok > 0,
             "detail": f"{runs_ok} corrida(s) exitosa(s)" if runs_ok else None,
             "href": f"/simulate/{qs}" if scenario_id else "/",
-            "what": "El motor congela un snapshot con todo lo que capturaste y calcula el horizonte "
-                    "completo: plan mensual, estado de resultados, flujo de efectivo y unit economics.",
-            "tip": "Mismo snapshot y misma versión del motor producen exactamente los mismos "
-                   "números. Por eso un plan exportado siempre se puede reproducir y defender.",
-            "eli5": "Simular es apretar el botón de «ya, calcula». El motor primero le "
-                    "toma una foto a todo lo que capturaste (esa foto se llama snapshot) y "
-                    "luego cuenta la historia mes a mes. Como la foto no cambia, si vuelves a "
-                    "simular la misma foto salen exactamente los mismos números.",
-            "hands_on": ["En tu proyecto pulsa «Simular» en el escenario Base",
-                         "Espera unos segundos a que el run diga «Exitoso»",
-                         "Abre los resultados: dashboard, plan mensual, P&L, flujo y unit economics",
-                         "Fíjate en el hash del run: es la huella de esa foto"],
         },
-        {
-            "key": "analisis", "title": "Analizar y comparar",
-            "short": "Análisis", "icon": "chart",
+        "analisis": {
             "done": analyses > 0 or runs_ok >= 2 or conclusions > 0,
             "detail": (f"{analyses} análisis de sensibilidad" if analyses
                        else f"{runs_ok} corridas comparables" if runs_ok >= 2
                        else f"{conclusions} conclusión(es) guardadas" if conclusions else None),
             "href": f"/sensitivity/{qs}" if scenario_id else "/",
-            "what": "Sensibilidad te dice qué palanca mueve más la aguja; el comparador enfrenta "
-                    "escenarios con sus diferencias; y Conclusiones propone hallazgos, riesgos y "
-                    "acciones citando la métrica que los sustenta.",
-            "tip": "En sensibilidad cada corrida cambia una sola variable, así los impactos son "
-                   "comparables entre sí contra el mismo punto de partida.",
-            "eli5": "La sensibilidad es el juego de «¿y si…?»: mueves una sola perilla a "
-                    "la vez y ves cuál mueve más la aguja. El tornado ordena las barras: la "
-                    "más larga es la perilla que más importa. El comparador pone dos "
-                    "escenarios lado a lado, y las conclusiones te dicen qué encontró el "
-                    "motor, con pruebas.",
-            "hands_on": ["Entra a «Sensibilidad» y elige el EBITDA acumulado como objetivo",
-                         "Marca 3 o 4 palancas (churn, CAC, conversión…) y ejecuta el análisis",
-                         "Lee el tornado: la barra más larga es tu prioridad",
-                         "En «Comparador» selecciona dos runs y mira los deltas",
-                         "En «Conclusiones» acepta o descarta lo que el motor propone"],
         },
-        {
-            "key": "entregable", "title": "Exportar el plan",
-            "short": "Exportar", "icon": "download",
+        "entregable": {
             "done": exports > 0,
             "detail": f"{exports} exportación(es) generadas" if exports else None,
             "href": f"/run/{q}" if pid else "/",
-            "what": "Desde los resultados generas el business plan en Excel (once hojas, sesenta "
-                    "meses) o el documento ejecutivo listo para presentar.",
-            "tip": "Ambos entregables citan la corrida que los originó, para que ningún número "
-                   "circule sin saber de dónde salió.",
-            "eli5": "Al final conviertes todo en algo que puedes compartir: un Excel con "
-                    "los 60 meses o un documento listo para presentar. Los dos llevan el "
-                    "sello del run que los creó, para que cualquiera pueda preguntar «¿de "
-                    "dónde salió este número?» y siempre haya respuesta.",
-            "hands_on": ["Abre los resultados de tu mejor run",
-                         "Pulsa «Exportar a Excel» y descarga el archivo",
-                         "Pulsa «Documento ejecutivo» y ábrelo en el navegador",
-                         "Imprímelo a PDF si lo vas a enviar: el run va citado en la portada"],
         },
-    ], {"imports": imports}
+    }
+
+    extra = {"imports": imports, "scenario_ids": scenario_ids, "first_scenario_id": scenario_id}
+    return [{**content, **dynamic[content["key"]]} for content in CONTENT], extra
 
 
 @router.get("/onboarding")
-def get_onboarding(project_id: str | None = None, db: Session = Depends(get_db)):
+def get_onboarding(background_tasks: BackgroundTasks, project_id: str | None = None,
+                   db: Session = Depends(get_db)):
     """Estado del roadmap. Sin project_id usa el proyecto más reciente."""
     if project_id:
         project = db.get(Project, project_id)
@@ -246,6 +343,27 @@ def get_onboarding(project_id: str | None = None, db: Session = Depends(get_db))
                              .order_by(Project.created_at.desc())).scalars().first()
 
     steps, extra = _steps(db, project)
+    scenes = _scene_data(db, project, extra["scenario_ids"], extra["first_scenario_id"])
+
+    # Re-redacción opcional con LLM (F6): si hay provider configurado, la
+    # versión adaptada al negocio se genera en background y se sirve desde
+    # caché cuando está lista. El endpoint nunca espera al modelo.
+    rewrite_status = "off"
+    rewritten: dict = {}
+    provider = tutorial_llm.default_provider()
+    if provider is not None and project is not None:
+        ctx = _rewrite_context(db, project)
+        fp = render.fingerprint(project.id, ctx, steps, provider.model)
+        cached = render.get_cached(project.id, fp)
+        if cached is not None:
+            rewritten = cached
+            rewrite_status = "listo"
+        else:
+            if render.should_generate(project.id, fp):
+                background_tasks.add_task(render.generate, provider, project.id,
+                                          fp, ctx, [dict(s) for s in steps])
+            rewrite_status = render.status(project.id, fp)
+
     # el primer paso no cumplido es el que está en curso; el resto queda pendiente
     current = next((s for s in steps if not s["done"]), None)
     for step in steps:
@@ -256,6 +374,11 @@ def get_onboarding(project_id: str | None = None, db: Session = Depends(get_db))
         else:
             step["status"] = "pendiente"
         step.pop("done")
+        step["scene_data"] = scenes.get(step["key"])
+        # el quiz enseña a usar la herramienta; hoy todo es contenido autorado
+        step["quiz"] = [{**q, "uses_real_data": False} for q in step.get("quiz", [])]
+        # el quiz nunca se re-redacta: sus afirmaciones están verificadas a mano
+        step["rewritten"] = rewritten.get(step["key"])
 
     completed = sum(1 for s in steps if s["status"] == "completado")
     return {
@@ -265,4 +388,5 @@ def get_onboarding(project_id: str | None = None, db: Session = Depends(get_db))
         "total": len(steps),
         "current_key": current["key"] if current else None,
         "imports_committed": extra["imports"],
+        "rewrite_status": rewrite_status,
     }
